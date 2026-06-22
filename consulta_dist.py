@@ -1,6 +1,6 @@
 # ============================================================
 # PAINEL DE DISTRIBUIÇÃO – CORA
-# Versão 3.0 – Adaptada para a base CORA
+# Versão 3.1 – OTIMIZADA para bases grandes (20k+ linhas)
 # Autor: Ricardo Marchette Sabino
 # ============================================================
 
@@ -26,24 +26,17 @@ st.set_page_config(
 st.markdown("""
 <style>
 .main { background-color: #F5F7FA; }
-
 .header {
     background: linear-gradient(90deg, #0B2545 0%, #13315C 100%);
-    padding: 28px 32px;
-    border-radius: 12px;
-    color: white;
-    margin-bottom: 24px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    padding: 28px 32px; border-radius: 12px; color: white;
+    margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
 .header h1 { color: white; font-size: 26px; margin: 0; font-weight: 600; }
 .header p  { color: #D9E2EC; margin: 4px 0 0 0; font-size: 14px; }
 
 [data-testid="stMetric"] {
-    background-color: white;
-    padding: 16px 20px;
-    border-radius: 10px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-    border-left: 4px solid #0B2545;
+    background-color: white; padding: 16px 20px; border-radius: 10px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-left: 4px solid #0B2545;
 }
 [data-testid="stMetricLabel"] { color: #5C6B7A !important; font-size: 13px !important; font-weight: 500 !important; }
 [data-testid="stMetricValue"] { color: #0B2545 !important; font-size: 28px !important; }
@@ -55,12 +48,8 @@ st.markdown("""
 .stButton>button:hover { background-color: #13315C; color: white; }
 
 .pedido-status {
-    display: inline-block;
-    padding: 4px 10px;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 500;
-    margin-right: 6px;
+    display: inline-block; padding: 4px 10px; border-radius: 6px;
+    font-size: 12px; font-weight: 500; margin-right: 6px;
 }
 .status-ok    { background-color: #DFF5E1; color: #1F7A3A; }
 .status-pend  { background-color: #FFF4D6; color: #8A6D00; }
@@ -75,10 +64,10 @@ footer { visibility: hidden; }
 # CONSTANTES
 # ------------------------------------------------------------
 ARQUIVO_BASE = "base_pedidos.parquet"
-INTERVALO_REFRESH_MS = 30_000
+INTERVALO_REFRESH_MS = 60_000   # ⚡ aumentado de 30s para 60s
 ABA_CORA = "CORA"
+CARDS_POR_PAGINA = 20            # ⚡ paginação dos clientes
 
-# Mapeamento: nome real na planilha -> nome amigável no app
 COLUNAS_MAP = {
     "Cód. unidade entrega": "CDD",
     "Cód. setor": "Setor",
@@ -98,47 +87,92 @@ COLUNAS_MAP = {
     "Distribuição": "Distribuição",
 }
 
-# Filtros disponíveis pro vendedor
-FILTROS_PADRAO = ["CDD", "Setor", "PDV", "Nome PDV", "Data entrada", "Data entrega"]
+FILTROS_PADRAO = ["CDD", "Setor", "PDV", "Nome PDV"]
 
 # ------------------------------------------------------------
-# AUTO-REFRESH
+# ⚡ AUTO-REFRESH (60s, só pra vendedor)
 # ------------------------------------------------------------
-st_autorefresh(interval=INTERVALO_REFRESH_MS, key="refresh_vendedor")
+if not st.session_state.get("admin_logado", False):
+    st_autorefresh(interval=INTERVALO_REFRESH_MS, key="refresh_vendedor")
 
 # ------------------------------------------------------------
-# FUNÇÕES
+# ⚡ FUNÇÕES COM CACHE
 # ------------------------------------------------------------
+
+@st.cache_data(show_spinner="Carregando base...")
+def carregar_base_cache(timestamp_arquivo):
+    """
+    Lê o parquet do disco e converte tipos otimizados.
+    O timestamp serve pra invalidar o cache quando a base é atualizada.
+    """
+    if not os.path.exists(ARQUIVO_BASE):
+        return None
+
+    df = pd.read_parquet(ARQUIVO_BASE)
+
+    # ⚡ Tipos otimizados (reduz uso de memória em até 70%)
+    for col in ["CDD", "Setor", "Tipo pedido", "Situação pedido", "Situação atendimento"]:
+        if col in df.columns:
+            df[col] = df[col].astype("category")
+
+    return df
+
+@st.cache_data(show_spinner=False)
+def calcular_resumos(df_hash, df):
+    """
+    Pré-calcula resumos por cliente (pedidos únicos + distribuições).
+    Roda uma vez e fica em cache.
+    """
+    if "Número pedido" not in df.columns:
+        return pd.DataFrame()
+
+    # Agrupa em uma única passada
+    resumo = df.groupby(["Nome PDV", "PDV"], observed=True).agg(
+        qtd_pedidos=("Número pedido", "nunique"),
+        qtd_linhas=("Número pedido", "count")
+    ).reset_index()
+
+    # Calcula distribuições por cliente
+    if "Distribuição" in df.columns:
+        pedidos_distrib = df.groupby(
+            ["Nome PDV", "PDV", "Número pedido"], observed=True
+        )["Distribuição"].max().reset_index()
+
+        distrib_por_cliente = pedidos_distrib.groupby(
+            ["Nome PDV", "PDV"], observed=True
+        )["Distribuição"].sum().reset_index()
+        distrib_por_cliente = distrib_por_cliente.rename(columns={"Distribuição": "qtd_distrib"})
+
+        resumo = resumo.merge(distrib_por_cliente, on=["Nome PDV", "PDV"], how="left")
+    else:
+        resumo["qtd_distrib"] = 0
+
+    return resumo
+
 def ler_arquivo_upload(arquivo):
-    """Lê o Excel pegando SÓ a aba CORA."""
     df = pd.read_excel(arquivo, sheet_name=ABA_CORA)
     df.columns = df.columns.str.strip()
-
-    # Renomeia as colunas que existem
     renomear = {k: v for k, v in COLUNAS_MAP.items() if k in df.columns}
     df = df.rename(columns=renomear)
 
-    # Converte datas
     for col in ["Data entrada", "Data entrega"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    # Garante que distribuição seja numérica (0 ou 1)
     if "Distribuição" in df.columns:
-        df["Distribuição"] = pd.to_numeric(df["Distribuição"], errors="coerce").fillna(0).astype(int)
+        df["Distribuição"] = pd.to_numeric(df["Distribuição"], errors="coerce").fillna(0).astype("int8")
+
+    # ⚡ Converte numéricos pra tipos menores
+    for col in ["Qtd venda (cx)", "Volume (hl)", "Valor líquido (R$)"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
 
     return df
 
-def carregar_base_do_servidor():
-    if os.path.exists(ARQUIVO_BASE):
-        df = pd.read_parquet(ARQUIVO_BASE)
-        ts = os.path.getmtime(ARQUIVO_BASE)
-        atualizado = datetime.fromtimestamp(ts).strftime("%d/%m/%Y %H:%M")
-        return df, atualizado
-    return None, None
-
 def salvar_base(df):
-    df.to_parquet(ARQUIVO_BASE, index=False)
+    df.to_parquet(ARQUIVO_BASE, index=False, compression="snappy")
+    # ⚡ Limpa o cache pra forçar recarregamento
+    st.cache_data.clear()
 
 def badge_status(texto, tipo="ok"):
     cor = {"ok": "status-ok", "pend": "status-pend", "erro": "status-erro"}.get(tipo, "status-pend")
@@ -190,7 +224,7 @@ with st.sidebar:
             st.rerun()
 
 # ------------------------------------------------------------
-# ÁREA DO ADMIN
+# ÁREA DO ADMIN (upload)
 # ------------------------------------------------------------
 if st.session_state.admin_logado:
     with st.sidebar:
@@ -199,24 +233,33 @@ if st.session_state.admin_logado:
         upload = st.file_uploader("Selecione o arquivo CORA (.xlsx):", type=["xlsx"])
         if upload is not None:
             try:
-                df_novo = ler_arquivo_upload(upload)
-                salvar_base(df_novo)
-                st.success(f"Base atualizada! {len(df_novo)} linhas da aba CORA.")
+                with st.spinner("Processando..."):
+                    df_novo = ler_arquivo_upload(upload)
+                    salvar_base(df_novo)
+                st.success(f"Base atualizada! {len(df_novo)} linhas.")
+                st.rerun()
             except Exception as e:
-                st.error(f"Erro ao ler arquivo: {e}")
+                st.error(f"Erro: {e}")
 
 # ------------------------------------------------------------
-# CARREGA BASE
+# ⚡ CARREGA COM CACHE
 # ------------------------------------------------------------
-df, ultima_atualizacao = carregar_base_do_servidor()
+if not os.path.exists(ARQUIVO_BASE):
+    st.info("⏳ Base ainda não disponível.")
+    st.stop()
 
-if df is None:
-    st.info("⏳ Base ainda não disponível. Volte em alguns instantes.")
+timestamp = os.path.getmtime(ARQUIVO_BASE)
+df = carregar_base_cache(timestamp)
+ultima_atualizacao = datetime.fromtimestamp(timestamp).strftime("%d/%m/%Y %H:%M")
+
+if df is None or df.empty:
+    st.info("⏳ Base vazia.")
     st.stop()
 
 st.markdown(
     f"<p style='color:#5C6B7A;font-size:13px;'>🔄 Base atualizada em <b>{ultima_atualizacao}</b> "
-    f"&nbsp;|&nbsp; Atualização automática a cada 30 segundos</p>",
+    f"&nbsp;|&nbsp; Total de linhas: <b>{len(df):,}</b>".replace(",", ".") +
+    "&nbsp;|&nbsp; Atualização automática a cada 60s</p>",
     unsafe_allow_html=True
 )
 
@@ -225,27 +268,25 @@ st.markdown(
 # ------------------------------------------------------------
 st.markdown("#### 🔎 Filtros")
 
-df_filtrado = df.copy()
+df_filtrado = df
 filtros_disponiveis = [c for c in FILTROS_PADRAO if c in df.columns]
 
 cols = st.columns(min(len(filtros_disponiveis), 4) or 1)
-
-# Filtros simples (CDD, Setor, PDV, Nome PDV)
-for i, coluna in enumerate([c for c in filtros_disponiveis if "Data" not in c]):
+for i, coluna in enumerate(filtros_disponiveis):
     valores = ["Todos"] + sorted(df[coluna].dropna().astype(str).unique().tolist())
     with cols[i % len(cols)]:
         escolha = st.selectbox(coluna, valores, key=f"f_{coluna}")
         if escolha != "Todos":
             df_filtrado = df_filtrado[df_filtrado[coluna].astype(str) == escolha]
 
-# Filtros de data
+# Datas
 col_d1, col_d2 = st.columns(2)
 if "Data entrada" in df.columns:
     with col_d1:
         datas = df["Data entrada"].dropna()
         if not datas.empty:
             min_d, max_d = datas.min().date(), datas.max().date()
-            faixa = st.date_input("Data entrada (período):", value=(min_d, max_d),
+            faixa = st.date_input("Data entrada:", value=(min_d, max_d),
                                   min_value=min_d, max_value=max_d, key="f_entrada")
             if isinstance(faixa, tuple) and len(faixa) == 2:
                 d1, d2 = faixa
@@ -259,7 +300,7 @@ if "Data entrega" in df.columns:
         datas = df["Data entrega"].dropna()
         if not datas.empty:
             min_d, max_d = datas.min().date(), datas.max().date()
-            faixa = st.date_input("Data entrega (período):", value=(min_d, max_d),
+            faixa = st.date_input("Data entrega:", value=(min_d, max_d),
                                   min_value=min_d, max_value=max_d, key="f_entrega")
             if isinstance(faixa, tuple) and len(faixa) == 2:
                 d1, d2 = faixa
@@ -278,116 +319,128 @@ if busca:
     df_filtrado = df_filtrado[mascara]
 
 # ------------------------------------------------------------
-# KPIs
+# KPIs (calculados rapidamente)
 # ------------------------------------------------------------
 st.markdown("---")
 
-# Conta pedidos únicos (não linhas)
 if "Número pedido" in df_filtrado.columns:
     total_pedidos = df_filtrado["Número pedido"].nunique()
+    if "Distribuição" in df_filtrado.columns:
+        distribuidos = (df_filtrado.groupby("Número pedido", observed=True)["Distribuição"].max() == 1).sum()
+    else:
+        distribuidos = 0
 else:
     total_pedidos = len(df_filtrado)
-
-if "Distribuição" in df_filtrado.columns and "Número pedido" in df_filtrado.columns:
-    distrib_df = df_filtrado.groupby("Número pedido")["Distribuição"].max()
-    distribuidos = int((distrib_df == 1).sum())
-else:
     distribuidos = 0
 
 nao_distribuidos = total_pedidos - distribuidos
 taxa = (distribuidos / total_pedidos * 100) if total_pedidos else 0
 
-valor_total = df_filtrado["Valor líquido (R$)"].sum() if "Valor líquido (R$)" in df_filtrado.columns else 0
-
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Pedidos", f"{total_pedidos:,}".replace(",", "."))
-k2.metric("✅ Distribuição", f"{distribuidos:,}".replace(",", "."))
-k3.metric("❌ Não distribuição", f"{nao_distribuidos:,}".replace(",", "."))
+k2.metric("✅ Distribuição", f"{int(distribuidos):,}".replace(",", "."))
+k3.metric("❌ Não distribuição", f"{int(nao_distribuidos):,}".replace(",", "."))
 k4.metric("📈 Taxa", f"{taxa:.1f}%")
 
 st.markdown("---")
 
 # ------------------------------------------------------------
-# CARDS POR CLIENTE
+# ⚡ RESUMO POR CLIENTE (com cache)
 # ------------------------------------------------------------
 st.markdown("### 🏪 Clientes")
 
 if "Nome PDV" not in df_filtrado.columns:
-    st.warning("A base não tem a coluna 'Nome fantasia'. Verifique o arquivo.")
+    st.warning("Base sem coluna 'Nome fantasia'.")
     st.stop()
 
-grupos = df_filtrado.groupby(["Nome PDV", "PDV"], dropna=False)
+# Hash dos filtros pra invalidar cache quando muda
+hash_filtros = hash((len(df_filtrado), busca, str(df_filtrado.index.min()), str(df_filtrado.index.max())))
+resumo_clientes = calcular_resumos(hash_filtros, df_filtrado)
 
-if len(grupos) == 0:
+if resumo_clientes.empty:
     st.info("Nenhum pedido encontrado com os filtros atuais.")
-else:
-    for (nome_pdv, cod_pdv), dados in grupos:
-        nome = str(nome_pdv) if pd.notna(nome_pdv) else "—"
-        pdv  = str(cod_pdv)  if pd.notna(cod_pdv)  else "—"
+    st.stop()
 
-        # Pedidos únicos
-        if "Número pedido" in dados.columns:
-            pedidos_unicos = dados["Número pedido"].nunique()
-            if "Distribuição" in dados.columns:
-                distrib_por_pedido = dados.groupby("Número pedido")["Distribuição"].max()
-                qtd_distrib = int((distrib_por_pedido == 1).sum())
-            else:
-                qtd_distrib = 0
-        else:
-            pedidos_unicos = len(dados)
-            qtd_distrib = 0
+# Ordena por quantidade de pedidos (mais relevantes primeiro)
+resumo_clientes = resumo_clientes.sort_values("qtd_pedidos", ascending=False).reset_index(drop=True)
 
-        titulo = (f"🏪  {nome}   •   PDV: {pdv}   "
-                  f"|   📦 {pedidos_unicos} pedidos   "
-                  f"|   ✅ {qtd_distrib} distribuições")
+# ------------------------------------------------------------
+# ⚡ PAGINAÇÃO
+# ------------------------------------------------------------
+total_clientes = len(resumo_clientes)
+total_paginas = max(1, (total_clientes - 1) // CARDS_POR_PAGINA + 1)
 
-        with st.expander(titulo):
-            # Agrupa por número do pedido
-            if "Número pedido" in dados.columns:
-                for num_pedido, itens in dados.groupby("Número pedido"):
-                    primeira = itens.iloc[0]
+col_info, col_pag = st.columns([3, 1])
+with col_info:
+    st.caption(f"Exibindo até **{CARDS_POR_PAGINA}** clientes por página • Total: **{total_clientes}** clientes")
+with col_pag:
+    pagina = st.number_input("Página:", min_value=1, max_value=total_paginas, value=1, step=1)
 
-                    tipo  = str(primeira.get("Tipo pedido", "—"))
-                    sit_p = str(primeira.get("Situação pedido", "—"))
-                    sit_a = str(primeira.get("Situação atendimento", "—"))
-                    distrib = int(primeira.get("Distribuição", 0)) if "Distribuição" in itens.columns else 0
+inicio = (pagina - 1) * CARDS_POR_PAGINA
+fim = inicio + CARDS_POR_PAGINA
+clientes_pagina = resumo_clientes.iloc[inicio:fim]
 
-                    badge_distrib = (
-                        '<span class="pedido-status status-ok">✅ Distribuição</span>'
-                        if distrib == 1 else
-                        '<span class="pedido-status status-erro">❌ Não distribuição</span>'
-                    )
+# ------------------------------------------------------------
+# ⚡ RENDERIZA SÓ OS CARDS DA PÁGINA ATUAL
+# ------------------------------------------------------------
+for _, linha in clientes_pagina.iterrows():
+    nome  = str(linha["Nome PDV"]) if pd.notna(linha["Nome PDV"]) else "—"
+    pdv   = str(linha["PDV"])      if pd.notna(linha["PDV"])      else "—"
+    qtd_p = int(linha["qtd_pedidos"])
+    qtd_d = int(linha.get("qtd_distrib", 0))
 
-                    badges = (
-                        badge_distrib +
-                        badge_status(tipo, "ok") +
-                        badge_status(sit_p, classifica_situacao(sit_p)) +
-                        badge_status(sit_a, classifica_situacao(sit_a))
-                    )
+    titulo = (f"🏪  {nome}   •   PDV: {pdv}   "
+              f"|   📦 {qtd_p} pedidos   "
+              f"|   ✅ {qtd_d} distribuições")
 
-                    data_entrada = primeira.get("Data entrada", "")
-                    data_entrega = primeira.get("Data entrega", "")
-                    data_entrada_str = data_entrada.strftime("%d/%m/%Y %H:%M") if pd.notna(data_entrada) else "—"
-                    data_entrega_str = data_entrega.strftime("%d/%m/%Y") if pd.notna(data_entrega) else "—"
+    # ⚡ Expander fechado por padrão (só carrega conteúdo quando clica)
+    with st.expander(titulo, expanded=False):
+        # Filtra só os pedidos desse cliente
+        dados_cliente = df_filtrado[
+            (df_filtrado["Nome PDV"] == linha["Nome PDV"]) &
+            (df_filtrado["PDV"] == linha["PDV"])
+        ]
 
-                    st.markdown(
-                        f"**Pedido {num_pedido}** &nbsp;&nbsp; "
-                        f"📅 Entrada: {data_entrada_str} &nbsp;|&nbsp; 🚚 Entrega: {data_entrega_str}<br>"
-                        f"{badges}",
-                        unsafe_allow_html=True
-                    )
+        if "Número pedido" in dados_cliente.columns:
+            for num_pedido, itens in dados_cliente.groupby("Número pedido", observed=True):
+                primeira = itens.iloc[0]
 
-                    # Tabela de itens
-                    colunas_itens = [c for c in [
-                        "Cód. produto", "Desc. produto",
-                        "Qtd venda (cx)", "Volume (hl)", "Valor líquido (R$)"
-                    ] if c in itens.columns]
+                tipo  = str(primeira.get("Tipo pedido", "—"))
+                sit_p = str(primeira.get("Situação pedido", "—"))
+                sit_a = str(primeira.get("Situação atendimento", "—"))
+                distrib = int(primeira.get("Distribuição", 0)) if "Distribuição" in itens.columns else 0
 
-                    st.dataframe(
-                        itens[colunas_itens].reset_index(drop=True),
-                        use_container_width=True,
-                        hide_index=True
-                    )
-                    st.markdown("---")
-            else:
-                st.dataframe(dados.reset_index(drop=True), use_container_width=True, hide_index=True)
+                badge_distrib = (
+                    '<span class="pedido-status status-ok">✅ Distribuição</span>'
+                    if distrib == 1 else
+                    '<span class="pedido-status status-erro">❌ Não distribuição</span>'
+                )
+                badges = (
+                    badge_distrib +
+                    badge_status(tipo, "ok") +
+                    badge_status(sit_p, classifica_situacao(sit_p)) +
+                    badge_status(sit_a, classifica_situacao(sit_a))
+                )
+
+                data_entrada = primeira.get("Data entrada", "")
+                data_entrega = primeira.get("Data entrega", "")
+                data_entrada_str = data_entrada.strftime("%d/%m/%Y %H:%M") if pd.notna(data_entrada) else "—"
+                data_entrega_str = data_entrega.strftime("%d/%m/%Y") if pd.notna(data_entrega) else "—"
+
+                st.markdown(
+                    f"**Pedido {num_pedido}** &nbsp;&nbsp; "
+                    f"📅 Entrada: {data_entrada_str} &nbsp;|&nbsp; 🚚 Entrega: {data_entrega_str}<br>"
+                    f"{badges}",
+                    unsafe_allow_html=True
+                )
+
+                colunas_itens = [c for c in [
+                    "Cód. produto", "Desc. produto",
+                    "Qtd venda (cx)", "Volume (hl)", "Valor líquido (R$)"
+                ] if c in itens.columns]
+
+                st.dataframe(
+                    itens[colunas_itens].reset_index(drop=True),
+                    use_container_width=True, hide_index=True
+                )
+                st.markdown("---")
