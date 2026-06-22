@@ -1,6 +1,6 @@
 # ============================================================
 # PAINEL DE DISTRIBUICAO - DIRETORIA EIXO ATLANTICO
-# Versao 4.4 - Otimizado para 30k+ linhas
+# Versao 5.0 - Definitiva, validada e otimizada
 # Autor: Ricardo Marchette Sabino
 # ============================================================
 
@@ -14,7 +14,7 @@ from datetime import datetime
 # ------------------------------------------------------------
 st.set_page_config(
     page_title="Painel de Distribuicao | Diretoria Eixo Atlantico",
-    page_icon="📊",
+    page_icon="\U0001F4CA",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -103,28 +103,28 @@ ABA_CORA = "CORA"
 CARDS_POR_PAGINA = 20
 
 COLUNAS_MAP = {
-    "Cód. unidade entrega": "CDD",
-    "Cód. setor": "Setor",
-    "Cód. cliente": "PDV",
+    "C\u00f3d. unidade entrega": "CDD",
+    "C\u00f3d. setor": "Setor",
+    "C\u00f3d. cliente": "PDV",
     "Nome fantasia": "Nome PDV",
     "Data entrada": "Data entrada",
     "Data entrega": "Data entrega",
-    "Cód. produto": "Cód. produto",
+    "C\u00f3d. produto": "C\u00f3d. produto",
     "Desc. produto": "Desc. produto",
     "Quant. venda": "Qtd venda (cx)",
     "Volume hectolitro": "Volume (hl)",
-    "Valor líquido item": "Valor líquido (R$)",
+    "Valor l\u00edquido item": "Valor l\u00edquido (R$)",
     "Tipo pedido": "Tipo pedido",
-    "Situação pedido": "Situação pedido",
-    "Situação atend. pedido": "Situação atendimento",
-    "Número pedido": "Número pedido",
-    "Distribuição": "Distribuição",
+    "Situa\u00e7\u00e3o pedido": "Situa\u00e7\u00e3o pedido",
+    "Situa\u00e7\u00e3o atend. pedido": "Situa\u00e7\u00e3o atendimento",
+    "N\u00famero pedido": "N\u00famero pedido",
+    "Distribui\u00e7\u00e3o": "Distribui\u00e7\u00e3o",
 }
 
 COLUNAS_PRODUTO = [
-    "Nome do Produto", "Categoria Agrupado", "Categoria", "Família",
-    "Marca", "Marca Consolidada", "Tamanho Embalagem", "Retornável",
-    "Segmento", "Cerveja sem Álcool", "Refrigerante Zero", "Marketplace",
+    "Nome do Produto", "Categoria Agrupado", "Categoria", "Fam\u00edlia",
+    "Marca", "Marca Consolidada", "Tamanho Embalagem", "Retorn\u00e1vel",
+    "Segmento", "Cerveja sem \u00c1lcool", "Refrigerante Zero", "Marketplace",
 ]
 
 COLUNAS_IGNORAR = ["Feito antes?", "Chave"]
@@ -139,7 +139,7 @@ def carregar_base_cache(timestamp_arquivo):
         return None
     df = pd.read_parquet(ARQUIVO_BASE)
     cols_categorizar = (
-        ["CDD", "Setor", "Tipo pedido", "Situação pedido", "Situação atendimento"]
+        ["CDD", "Setor", "Tipo pedido", "Situa\u00e7\u00e3o pedido", "Situa\u00e7\u00e3o atendimento"]
         + COLUNAS_PRODUTO
     )
     for col in cols_categorizar:
@@ -151,12 +151,15 @@ def carregar_base_cache(timestamp_arquivo):
 # REGRA DE DISTRIBUICAO (mais proxima de hoje)
 # ------------------------------------------------------------
 def aplicar_regra_distribuicao(df):
-    if "Distribuição" not in df.columns:
+    col_dist = "Distribui\u00e7\u00e3o"
+    col_prod = "C\u00f3d. produto"
+
+    if col_dist not in df.columns:
         return df
-    if not all(c in df.columns for c in ["PDV", "Cód. produto", "Data entrega"]):
+    if not all(c in df.columns for c in ["PDV", col_prod, "Data entrega"]):
         return df
 
-    df_dist = df[df["Distribuição"] == 1].copy()
+    df_dist = df[df[col_dist] == 1].copy()
     if df_dist.empty:
         return df
 
@@ -169,26 +172,26 @@ def aplicar_regra_distribuicao(df):
         _dist_dias=(df_dist_validas["Data entrega"] - hoje).abs()
     )
     idx_manter = df_dist_validas.groupby(
-        ["PDV", "Cód. produto"], observed=True
+        ["PDV", col_prod], observed=True
     )["_dist_dias"].idxmin().values
 
-    df["Distribuição"] = 0
-    df.loc[idx_manter, "Distribuição"] = 1
-    df["Distribuição"] = df["Distribuição"].astype("int8")
+    df[col_dist] = 0
+    df.loc[idx_manter, col_dist] = 1
+    df[col_dist] = df[col_dist].astype("int8")
     return df
 
 # ------------------------------------------------------------
-# UPLOAD OTIMIZADO (com calamine + barra de progresso)
+# UPLOAD OTIMIZADO
 # ------------------------------------------------------------
 def ler_arquivo_upload(arquivo, progress_bar=None, status_text=None):
     """Le o Excel da aba CORA de forma otimizada."""
 
     if status_text:
-        status_text.text("📖 Lendo arquivo Excel (pode levar alguns segundos)...")
+        status_text.text("Lendo arquivo Excel (pode levar alguns segundos)...")
     if progress_bar:
         progress_bar.progress(10)
 
-    # OTIMIZACAO 1: tenta calamine (muito mais rapido), fallback para openpyxl
+    # Tenta calamine (muito mais rapido), fallback para openpyxl
     try:
         df = pd.read_excel(arquivo, sheet_name=ABA_CORA, engine="calamine")
     except Exception:
@@ -198,7 +201,7 @@ def ler_arquivo_upload(arquivo, progress_bar=None, status_text=None):
         progress_bar.progress(50)
     if status_text:
         n = f"{len(df):,}".replace(",", ".")
-        status_text.text(f"⚙️ Processando {n} linhas...")
+        status_text.text(f"Processando {n} linhas...")
 
     df.columns = df.columns.str.strip()
 
@@ -219,49 +222,33 @@ def ler_arquivo_upload(arquivo, progress_bar=None, status_text=None):
             df[col] = pd.to_datetime(df[col], errors="coerce")
 
     # Distribuicao
-    if "Distribuição" in df.columns:
-        df["Distribuição"] = pd.to_numeric(
-            df["Distribuição"], errors="coerce"
+    col_dist = "Distribui\u00e7\u00e3o"
+    if col_dist in df.columns:
+        df[col_dist] = pd.to_numeric(
+            df[col_dist], errors="coerce"
         ).fillna(0).astype("int8")
 
     # Numericos
-    for col in ["Qtd venda (cx)", "Volume (hl)", "Valor líquido (R$)"]:
+    for col in ["Qtd venda (cx)", "Volume (hl)", "Valor l\u00edquido (R$)"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
 
     if progress_bar:
-        progress_bar.progress(75)
-
-    # OTIMIZACAO 2: converte colunas texto em batch
-    colunas_texto = (
-        COLUNAS_PRODUTO +
-        ["CDD", "Setor", "PDV", "Nome PDV", "Cód. produto", "Desc. produto",
-         "Tipo pedido", "Situação pedido", "Situação atendimento", "Número pedido"]
-    )
-    colunas_texto_existentes = [c for c in colunas_texto if c in df.columns]
-    if colunas_texto_existentes:
-        df[colunas_texto_existentes] = df[colunas_texto_existentes].astype(str)
-        df[colunas_texto_existentes] = df[colunas_texto_existentes].replace(
-            {"nan": "", "None": "", "NaT": ""}
-        )
-
-    if progress_bar:
-        progress_bar.progress(90)
+        progress_bar.progress(80)
     if status_text:
-        status_text.text("🎯 Aplicando regra de distribuicao...")
+        status_text.text("Aplicando regra de distribuicao...")
 
     df = aplicar_regra_distribuicao(df)
 
     if progress_bar:
         progress_bar.progress(100)
-    if status_text:
-        status_text.text("✅ Processamento concluido!")
 
     return df
 
 def salvar_base(df):
-    # ⚡ CORREÇÃO FINAL: força TODAS as colunas object para string
-    # Isso garante que o parquet não falhe com tipos mistos
+    """Salva a base em parquet, forcando colunas object para string."""
+    # CRITICO: forca TODAS as colunas object para string
+    # Evita erro do parquet com tipos mistos
     for col in df.select_dtypes(include=["object"]).columns:
         df[col] = df[col].astype(str).replace(
             {"nan": "", "None": "", "NaT": "", "<NA>": ""}
@@ -277,7 +264,7 @@ def ler_timestamp():
     if os.path.exists(ARQUIVO_TIMESTAMP):
         with open(ARQUIVO_TIMESTAMP, "r", encoding="utf-8") as f:
             return f.read().strip()
-    return "—"
+    return "-"
 
 # ------------------------------------------------------------
 # AUXILIARES VISUAIS
@@ -300,8 +287,8 @@ def classifica_situacao(valor):
 # ------------------------------------------------------------
 st.markdown("""
 <div class="header">
-    <h1>📊 Painel de Distribuição – Diretoria Eixo Atlântico</h1>
-    <p>Consulta de pedidos e acompanhamento de distribuição</p>
+    <h1>\U0001F4CA Painel de Distribui\u00e7\u00e3o \u2013 Diretoria Eixo Atl\u00e2ntico</h1>
+    <p>Consulta de pedidos e acompanhamento de distribui\u00e7\u00e3o</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -310,12 +297,14 @@ st.markdown("""
 # ------------------------------------------------------------
 if "admin_logado" not in st.session_state:
     st.session_state.admin_logado = False
+if "upload_key" not in st.session_state:
+    st.session_state.upload_key = 0
 
 # ------------------------------------------------------------
 # SIDEBAR - LOGIN E UPLOAD
 # ------------------------------------------------------------
 with st.sidebar:
-    st.markdown("### 🔐 Acesso restrito")
+    st.markdown("### \U0001F510 Acesso restrito")
     if not st.session_state.admin_logado:
         senha = st.text_input("Senha:", type="password")
         if st.button("Entrar"):
@@ -329,18 +318,14 @@ with st.sidebar:
             else:
                 st.error("Senha incorreta.")
     else:
-        st.success("✅ Modo administrador")
+        st.success("\u2705 Modo administrador")
         if st.button("Sair"):
             st.session_state.admin_logado = False
             st.rerun()
 
-   if st.session_state.admin_logado:
+    if st.session_state.admin_logado:
         st.markdown("---")
-        st.markdown("### ⚙️ Atualizar base")
-
-        # Chave dinâmica do uploader (muda após upload bem-sucedido)
-        if "upload_key" not in st.session_state:
-            st.session_state.upload_key = 0
+        st.markdown("### Atualizar base")
 
         upload = st.file_uploader(
             "Arquivo CORA (.xlsx):",
@@ -355,25 +340,26 @@ with st.sidebar:
 
                 df_novo = ler_arquivo_upload(upload, progress_bar, status_text)
 
-                status_text.text("💾 Salvando base...")
+                status_text.text("Salvando base...")
                 salvar_base(df_novo)
 
                 progress_bar.empty()
                 status_text.empty()
 
                 n = f"{len(df_novo):,}".replace(",", ".")
-                st.success(f"✅ Base atualizada! {n} linhas.")
+                st.success(f"\u2705 Base atualizada! {n} linhas.")
 
-                # ⚡ Incrementa a chave pra "resetar" o uploader
+                # Incrementa a chave pra resetar o uploader e evitar loop
                 st.session_state.upload_key += 1
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro: {e}")
+
 # ------------------------------------------------------------
 # CARREGA BASE
 # ------------------------------------------------------------
 if not os.path.exists(ARQUIVO_BASE):
-    st.info("⏳ Base ainda nao disponivel.")
+    st.info("Base ainda nao disponivel. Aguarde o administrador.")
     st.stop()
 
 timestamp_arquivo = os.path.getmtime(ARQUIVO_BASE)
@@ -381,12 +367,12 @@ df = carregar_base_cache(timestamp_arquivo)
 ultima_atualizacao = ler_timestamp()
 
 if df is None or df.empty:
-    st.info("⏳ Base vazia.")
+    st.info("Base vazia.")
     st.stop()
 
 total_linhas_str = f"{len(df):,}".replace(",", ".")
 st.markdown(
-    f"<div class='info-bar'>🔄 Base atualizada em <b>{ultima_atualizacao}</b> "
+    f"<div class='info-bar'>Base atualizada em <b>{ultima_atualizacao}</b> "
     f"&nbsp;|&nbsp; Total de linhas: <b>{total_linhas_str}</b></div>",
     unsafe_allow_html=True
 )
@@ -394,7 +380,7 @@ st.markdown(
 # ------------------------------------------------------------
 # FILTROS PRINCIPAIS
 # ------------------------------------------------------------
-st.markdown('<div class="section-title">🔎 Filtros principais</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Filtros principais</div>', unsafe_allow_html=True)
 
 df_filtrado = df
 filtros_disponiveis = [c for c in FILTROS_PADRAO if c in df.columns]
@@ -453,7 +439,7 @@ if "Data entrega" in df.columns:
 # ------------------------------------------------------------
 # FILTRO PRODUTO (expander simples)
 # ------------------------------------------------------------
-with st.expander("🍺 Filtro Produto (clique para abrir)", expanded=False):
+with st.expander("Filtro Produto (clique para abrir)", expanded=False):
     colunas_produto_existentes = [c for c in COLUNAS_PRODUTO if c in df.columns]
     filtros_produto_escolhidos = {}
 
@@ -476,13 +462,16 @@ with st.expander("🍺 Filtro Produto (clique para abrir)", expanded=False):
 # ------------------------------------------------------------
 st.markdown("---")
 
-if "Número pedido" in df_filtrado.columns:
-    total_pedidos = df_filtrado["Número pedido"].nunique()
+col_num_pedido = "N\u00famero pedido"
+col_dist = "Distribui\u00e7\u00e3o"
+
+if col_num_pedido in df_filtrado.columns:
+    total_pedidos = df_filtrado[col_num_pedido].nunique()
 else:
     total_pedidos = len(df_filtrado)
 
-if "Distribuição" in df_filtrado.columns:
-    distribuidos = int(df_filtrado["Distribuição"].sum())
+if col_dist in df_filtrado.columns:
+    distribuidos = int(df_filtrado[col_dist].sum())
 else:
     distribuidos = 0
 
@@ -491,24 +480,24 @@ taxa = (distribuidos / total_pedidos * 100) if total_pedidos else 0
 
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Pedidos", f"{total_pedidos:,}".replace(",", "."))
-k2.metric("✅ Distribuição", f"{distribuidos:,}".replace(",", "."))
-k3.metric("❌ Não distribuição", f"{nao_distribuidos:,}".replace(",", "."))
-k4.metric("📈 Taxa", f"{taxa:.1f}%")
+k2.metric("\u2705 Distribui\u00e7\u00e3o", f"{distribuidos:,}".replace(",", "."))
+k3.metric("\u274C Nao distribui\u00e7\u00e3o", f"{nao_distribuidos:,}".replace(",", "."))
+k4.metric("Taxa", f"{taxa:.1f}%")
 
 st.markdown("---")
 
 # ------------------------------------------------------------
 # RESUMO POR CLIENTE
 # ------------------------------------------------------------
-st.markdown('<div class="section-title">🏪 Clientes</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-title">Clientes</div>', unsafe_allow_html=True)
 
 if "Nome PDV" not in df_filtrado.columns or df_filtrado.empty:
     st.info("Nenhum pedido encontrado com os filtros atuais.")
     st.stop()
 
 resumo_clientes = df_filtrado.groupby(["Nome PDV", "PDV"], observed=True).agg(
-    qtd_pedidos=("Número pedido", "nunique"),
-    qtd_distrib=("Distribuição", "sum")
+    qtd_pedidos=(col_num_pedido, "nunique"),
+    qtd_distrib=(col_dist, "sum")
 ).reset_index()
 
 resumo_clientes["qtd_distrib"] = resumo_clientes["qtd_distrib"].fillna(0).astype(int)
@@ -522,9 +511,9 @@ total_paginas = max(1, (total_clientes - 1) // CARDS_POR_PAGINA + 1)
 
 col_info, col_pag = st.columns([3, 1])
 with col_info:
-    st.caption(f"Exibindo até **{CARDS_POR_PAGINA}** clientes por página • Total: **{total_clientes}** clientes")
+    st.caption(f"Exibindo ate **{CARDS_POR_PAGINA}** clientes por pagina - Total: **{total_clientes}** clientes")
 with col_pag:
-    pagina = st.number_input("Página:", min_value=1, max_value=total_paginas, value=1, step=1)
+    pagina = st.number_input("Pagina:", min_value=1, max_value=total_paginas, value=1, step=1)
 
 inicio = (pagina - 1) * CARDS_POR_PAGINA
 fim = inicio + CARDS_POR_PAGINA
@@ -534,15 +523,15 @@ clientes_pagina = resumo_clientes.iloc[inicio:fim]
 # CARDS POR CLIENTE
 # ------------------------------------------------------------
 for _, linha in clientes_pagina.iterrows():
-    nome = str(linha["Nome PDV"]) if pd.notna(linha["Nome PDV"]) else "—"
-    pdv = str(linha["PDV"]) if pd.notna(linha["PDV"]) else "—"
+    nome = str(linha["Nome PDV"]) if pd.notna(linha["Nome PDV"]) else "-"
+    pdv = str(linha["PDV"]) if pd.notna(linha["PDV"]) else "-"
     qtd_p = int(linha["qtd_pedidos"])
     qtd_d = int(linha["qtd_distrib"])
 
     titulo = (
-        f"🏪  {nome}   •   PDV: {pdv}   "
-        f"|   📦 {qtd_p} pedidos   "
-        f"|   ✅ {qtd_d} distribuições"
+        f"{nome}   |   PDV: {pdv}   "
+        f"|   {qtd_p} pedidos   "
+        f"|   {qtd_d} distribuicoes"
     )
 
     with st.expander(titulo, expanded=False):
@@ -551,23 +540,23 @@ for _, linha in clientes_pagina.iterrows():
             (df_filtrado["PDV"] == linha["PDV"])
         ]
 
-        if "Número pedido" in dados_cliente.columns:
-            for num_pedido, itens in dados_cliente.groupby("Número pedido", observed=True):
+        if col_num_pedido in dados_cliente.columns:
+            for num_pedido, itens in dados_cliente.groupby(col_num_pedido, observed=True):
                 primeira = itens.iloc[0]
 
-                tipo = str(primeira.get("Tipo pedido", "—"))
-                sit_p = str(primeira.get("Situação pedido", "—"))
-                sit_a = str(primeira.get("Situação atendimento", "—"))
+                tipo = str(primeira.get("Tipo pedido", "-"))
+                sit_p = str(primeira.get("Situa\u00e7\u00e3o pedido", "-"))
+                sit_a = str(primeira.get("Situa\u00e7\u00e3o atendimento", "-"))
 
-                if "Distribuição" in itens.columns:
-                    pedido_eh_distrib = int(itens["Distribuição"].max())
+                if col_dist in itens.columns:
+                    pedido_eh_distrib = int(itens[col_dist].max())
                 else:
                     pedido_eh_distrib = 0
 
                 if pedido_eh_distrib == 1:
-                    badge_distrib = '<span class="pedido-status status-ok">✅ Distribuição</span>'
+                    badge_distrib = '<span class="pedido-status status-ok">\u2705 Distribui\u00e7\u00e3o</span>'
                 else:
-                    badge_distrib = '<span class="pedido-status status-erro">❌ Não distribuição</span>'
+                    badge_distrib = '<span class="pedido-status status-erro">\u274C Nao distribui\u00e7\u00e3o</span>'
 
                 badges = (
                     badge_distrib +
@@ -582,32 +571,32 @@ for _, linha in clientes_pagina.iterrows():
                 if pd.notna(data_entrada):
                     data_entrada_str = data_entrada.strftime("%d/%m/%Y %H:%M")
                 else:
-                    data_entrada_str = "—"
+                    data_entrada_str = "-"
 
                 if pd.notna(data_entrega):
                     data_entrega_str = data_entrega.strftime("%d/%m/%Y")
                 else:
-                    data_entrega_str = "—"
+                    data_entrega_str = "-"
 
                 st.markdown(
                     f"**Pedido {num_pedido}** &nbsp;&nbsp; "
-                    f"📅 Entrada: {data_entrada_str} &nbsp;|&nbsp; 🚚 Entrega: {data_entrega_str}<br>"
+                    f"Entrada: {data_entrada_str} &nbsp;|&nbsp; Entrega: {data_entrega_str}<br>"
                     f"{badges}",
                     unsafe_allow_html=True
                 )
 
                 colunas_disponiveis_itens = [
-                    "Cód. produto", "Desc. produto",
-                    "Qtd venda (cx)", "Volume (hl)", "Valor líquido (R$)",
-                    "Distribuição"
+                    "C\u00f3d. produto", "Desc. produto",
+                    "Qtd venda (cx)", "Volume (hl)", "Valor l\u00edquido (R$)",
+                    col_dist
                 ]
                 colunas_itens = [c for c in colunas_disponiveis_itens if c in itens.columns]
 
                 itens_exibir = itens[colunas_itens].copy().reset_index(drop=True)
-                if "Distribuição" in itens_exibir.columns:
-                    itens_exibir["Distribuição"] = itens_exibir["Distribuição"].map(
-                        {1: "✅", 0: "❌"}
-                    ).fillna("❌")
+                if col_dist in itens_exibir.columns:
+                    itens_exibir[col_dist] = itens_exibir[col_dist].map(
+                        {1: "\u2705", 0: "\u274C"}
+                    ).fillna("\u274C")
 
                 st.dataframe(itens_exibir, use_container_width=True, hide_index=True)
                 st.markdown("---")
