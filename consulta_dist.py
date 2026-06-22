@@ -334,10 +334,20 @@ with st.sidebar:
             st.session_state.admin_logado = False
             st.rerun()
 
-    if st.session_state.admin_logado:
+   if st.session_state.admin_logado:
         st.markdown("---")
         st.markdown("### ⚙️ Atualizar base")
-        upload = st.file_uploader("Arquivo CORA (.xlsx):", type=["xlsx"])
+
+        # Chave dinâmica do uploader (muda após upload bem-sucedido)
+        if "upload_key" not in st.session_state:
+            st.session_state.upload_key = 0
+
+        upload = st.file_uploader(
+            "Arquivo CORA (.xlsx):",
+            type=["xlsx"],
+            key=f"uploader_{st.session_state.upload_key}"
+        )
+
         if upload is not None:
             try:
                 progress_bar = st.progress(0)
@@ -353,10 +363,12 @@ with st.sidebar:
 
                 n = f"{len(df_novo):,}".replace(",", ".")
                 st.success(f"✅ Base atualizada! {n} linhas.")
+
+                # ⚡ Incrementa a chave pra "resetar" o uploader
+                st.session_state.upload_key += 1
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro: {e}")
-
 # ------------------------------------------------------------
 # CARREGA BASE
 # ------------------------------------------------------------
