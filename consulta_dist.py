@@ -1,8 +1,6 @@
 # ============================================================
-# PAINEL DE DISTRIBUIÇÃO – CORA
-# Versão 3.3 – Sem busca livre, sem auto-refresh,
-# Distribuição deduplicada por PDV + Produto
-# (data de entrega MAIS PRÓXIMA DE HOJE)
+# PAINEL DE DISTRIBUIÇÃO – DIRETORIA EIXO ATLÂNTICO
+# Versão 4.0 – Filtros de produto agrupados + visual refinado
 # Autor: Ricardo Marchette Sabino
 # ============================================================
 
@@ -15,7 +13,7 @@ from datetime import datetime
 # CONFIGURAÇÃO BÁSICA
 # ------------------------------------------------------------
 st.set_page_config(
-    page_title="Painel de Distribuição | CORA",
+    page_title="Painel de Distribuição | Diretoria Eixo Atlântico",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -26,35 +24,126 @@ st.set_page_config(
 # ------------------------------------------------------------
 st.markdown("""
 <style>
-.main { background-color: #F5F7FA; }
+.main { background-color: #F4F6FA; }
+
+/* Cabeçalho refinado */
 .header {
-    background: linear-gradient(90deg, #0B2545 0%, #13315C 100%);
-    padding: 28px 32px; border-radius: 12px; color: white;
-    margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    background: linear-gradient(135deg, #0B2545 0%, #13315C 50%, #1B4080 100%);
+    padding: 32px 36px;
+    border-radius: 14px;
+    color: white;
+    margin-bottom: 28px;
+    box-shadow: 0 4px 14px rgba(11,37,69,0.18);
+    position: relative;
+    overflow: hidden;
 }
-.header h1 { color: white; font-size: 26px; margin: 0; font-weight: 600; }
-.header p  { color: #D9E2EC; margin: 4px 0 0 0; font-size: 14px; }
+.header::after {
+    content: "";
+    position: absolute;
+    right: -40px;
+    top: -40px;
+    width: 180px;
+    height: 180px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 50%;
+}
+.header h1 {
+    color: white;
+    font-size: 28px;
+    margin: 0;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+.header p {
+    color: #D9E2EC;
+    margin: 6px 0 0 0;
+    font-size: 14px;
+    font-weight: 400;
+}
 
+/* KPIs */
 [data-testid="stMetric"] {
-    background-color: white; padding: 16px 20px; border-radius: 10px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-left: 4px solid #0B2545;
+    background-color: white;
+    padding: 18px 22px;
+    border-radius: 12px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    border-left: 4px solid #0B2545;
+    transition: transform 0.15s ease;
 }
-[data-testid="stMetricLabel"] { color: #5C6B7A !important; font-size: 13px !important; font-weight: 500 !important; }
-[data-testid="stMetricValue"] { color: #0B2545 !important; font-size: 28px !important; }
+[data-testid="stMetric"]:hover { transform: translateY(-2px); }
+[data-testid="stMetricLabel"] {
+    color: #5C6B7A !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+[data-testid="stMetricValue"] {
+    color: #0B2545 !important;
+    font-size: 30px !important;
+    font-weight: 700 !important;
+}
 
+/* Botões */
 .stButton>button {
-    background-color: #0B2545; color: white; border-radius: 8px;
-    border: none; padding: 8px 18px; font-weight: 500;
+    background-color: #0B2545;
+    color: white;
+    border-radius: 8px;
+    border: none;
+    padding: 10px 20px;
+    font-weight: 500;
+    transition: all 0.15s ease;
 }
-.stButton>button:hover { background-color: #13315C; color: white; }
+.stButton>button:hover {
+    background-color: #13315C;
+    color: white;
+    box-shadow: 0 4px 10px rgba(11,37,69,0.2);
+}
 
+/* Badges de status */
 .pedido-status {
-    display: inline-block; padding: 4px 10px; border-radius: 6px;
-    font-size: 12px; font-weight: 500; margin-right: 6px;
+    display: inline-block;
+    padding: 5px 11px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    margin-right: 6px;
+    margin-bottom: 4px;
 }
 .status-ok    { background-color: #DFF5E1; color: #1F7A3A; }
 .status-pend  { background-color: #FFF4D6; color: #8A6D00; }
 .status-erro  { background-color: #FBE3E3; color: #A12626; }
+
+/* Seções */
+.section-title {
+    color: #0B2545;
+    font-size: 17px;
+    font-weight: 600;
+    margin: 24px 0 12px 0;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #E5E9F0;
+}
+
+/* Info bar */
+.info-bar {
+    background: white;
+    padding: 10px 16px;
+    border-radius: 8px;
+    border-left: 3px solid #0B2545;
+    margin-bottom: 18px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+
+/* Filtro produto destaque */
+.filtro-produto-ativo {
+    background: #E8F0FE;
+    border: 1px solid #C8DAF5;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: #0B2545;
+}
 
 footer { visibility: hidden; }
 #MainMenu { visibility: hidden; }
@@ -69,6 +158,7 @@ ARQUIVO_TIMESTAMP = "ultima_atualizacao.txt"
 ABA_CORA = "CORA"
 CARDS_POR_PAGINA = 20
 
+# Colunas principais (do app)
 COLUNAS_MAP = {
     "Cód. unidade entrega": "CDD",
     "Cód. setor": "Setor",
@@ -88,6 +178,25 @@ COLUNAS_MAP = {
     "Distribuição": "Distribuição",
 }
 
+# Colunas de produto (D a O da planilha) - mantém o mesmo nome
+COLUNAS_PRODUTO = [
+    "Nome do Produto",
+    "Categoria Agrupado",
+    "Categoria",
+    "Família",
+    "Marca",
+    "Marca Consolidada",
+    "Tamanho Embalagem",
+    "Retornável",
+    "Segmento",
+    "Cerveja sem Álcool",
+    "Refrigerante Zero",
+    "Marketplace",
+]
+
+# Colunas auxiliares que devem ser ignoradas
+COLUNAS_IGNORAR = ["Feito antes?", "Chave"]
+
 FILTROS_PADRAO = ["CDD", "Setor", "PDV", "Nome PDV"]
 
 # ------------------------------------------------------------
@@ -98,7 +207,7 @@ def carregar_base_cache(timestamp_arquivo):
     if not os.path.exists(ARQUIVO_BASE):
         return None
     df = pd.read_parquet(ARQUIVO_BASE)
-    for col in ["CDD", "Setor", "Tipo pedido", "Situação pedido", "Situação atendimento"]:
+    for col in ["CDD", "Setor", "Tipo pedido", "Situação pedido", "Situação atendimento"] + COLUNAS_PRODUTO:
         if col in df.columns:
             df[col] = df[col].astype("category")
     return df
@@ -113,10 +222,8 @@ def calcular_resumos(hash_filtros, df):
     ).reset_index()
 
     if "Distribuição" in df.columns:
-        pedidos_distrib = df.groupby(
-            ["Nome PDV", "PDV", "Número pedido"], observed=True
-        )["Distribuição"].max().reset_index()
-        distrib_cliente = pedidos_distrib.groupby(
+        # Soma direta porque a regra já foi aplicada no upload (sem duplicidade)
+        distrib_cliente = df.groupby(
             ["Nome PDV", "PDV"], observed=True
         )["Distribuição"].sum().reset_index().rename(columns={"Distribuição": "qtd_distrib"})
         resumo = resumo.merge(distrib_cliente, on=["Nome PDV", "PDV"], how="left")
@@ -129,13 +236,6 @@ def calcular_resumos(hash_filtros, df):
 # REGRA DE DISTRIBUIÇÃO (data de entrega MAIS PRÓXIMA DE HOJE)
 # ------------------------------------------------------------
 def aplicar_regra_distribuicao(df):
-    """
-    Regra:
-    - Mesmo produto vendido várias vezes pro mesmo PDV → aparece TODAS as vezes
-    - Mas só a linha com a DATA DE ENTREGA MAIS PRÓXIMA DE HOJE
-      conta como Distribuição = 1
-    - As outras viram Distribuição = 0 (evita duplicidade)
-    """
     if "Distribuição" not in df.columns:
         return df
     if not all(c in df.columns for c in ["PDV", "Cód. produto", "Data entrega"]):
@@ -149,13 +249,11 @@ def aplicar_regra_distribuicao(df):
     if df_dist_validas.empty:
         return df
 
-    # ⚡ Calcula a distância (em dias) de cada data até HOJE
     hoje = pd.Timestamp(datetime.now().date())
     df_dist_validas = df_dist_validas.assign(
         _dist_dias=(df_dist_validas["Data entrega"] - hoje).abs()
     )
 
-    # Para cada (PDV, Cód. produto), pega o índice da menor distância
     idx_manter = df_dist_validas.groupby(
         ["PDV", "Cód. produto"], observed=True
     )["_dist_dias"].idxmin().values
@@ -172,16 +270,26 @@ def aplicar_regra_distribuicao(df):
 def ler_arquivo_upload(arquivo):
     df = pd.read_excel(arquivo, sheet_name=ABA_CORA)
     df.columns = df.columns.str.strip()
+
+    # Remove colunas auxiliares
+    for col in COLUNAS_IGNORAR:
+        if col in df.columns:
+            df = df.drop(columns=[col])
+
+    # Renomeia colunas principais
     renomear = {k: v for k, v in COLUNAS_MAP.items() if k in df.columns}
     df = df.rename(columns=renomear)
 
+    # Converte datas
     for col in ["Data entrada", "Data entrega"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
 
+    # Distribuição inteira
     if "Distribuição" in df.columns:
         df["Distribuição"] = pd.to_numeric(df["Distribuição"], errors="coerce").fillna(0).astype("int8")
 
+    # Numéricos
     for col in ["Qtd venda (cx)", "Volume (hl)", "Valor líquido (R$)"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
@@ -222,8 +330,8 @@ def classifica_situacao(valor):
 # ------------------------------------------------------------
 st.markdown("""
 <div class="header">
-    <h1>📊 Painel de Distribuição – CORA</h1>
-    <p>Consulta de pedidos – Operação Comercial</p>
+    <h1>📊 Painel de Distribuição – Diretoria Eixo Atlântico</h1>
+    <p>Consulta de pedidos e acompanhamento de distribuição em tempo real</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -232,6 +340,10 @@ st.markdown("""
 # ------------------------------------------------------------
 if "admin_logado" not in st.session_state:
     st.session_state.admin_logado = False
+if "filtros_produto" not in st.session_state:
+    st.session_state.filtros_produto = {}
+if "show_filtro_produto" not in st.session_state:
+    st.session_state.show_filtro_produto = False
 
 with st.sidebar:
     st.markdown("### 🔐 Acesso restrito")
@@ -288,15 +400,15 @@ if df is None or df.empty:
     st.stop()
 
 st.markdown(
-    f"<p style='color:#5C6B7A;font-size:13px;'>🔄 Base atualizada em <b>{ultima_atualizacao}</b> "
-    f"&nbsp;|&nbsp; Total de linhas: <b>{len(df):,}</b>".replace(",", ".") + "</p>",
+    f"<div class='info-bar'>🔄 Base atualizada em <b>{ultima_atualizacao}</b> "
+    f"&nbsp;|&nbsp; Total de linhas: <b>{len(df):,}</b></div>".replace(",", "."),
     unsafe_allow_html=True
 )
 
 # ------------------------------------------------------------
-# FILTROS
+# FILTROS PRINCIPAIS
 # ------------------------------------------------------------
-st.markdown("#### 🔎 Filtros")
+st.markdown('<div class="section-title">🔎 Filtros principais</div>', unsafe_allow_html=True)
 
 df_filtrado = df
 filtros_disponiveis = [c for c in FILTROS_PADRAO if c in df.columns]
@@ -340,6 +452,56 @@ if "Data entrega" in df.columns:
                 ]
 
 # ------------------------------------------------------------
+# FILTRO PRODUTO (botão + popover)
+# ------------------------------------------------------------
+col_btn, col_status = st.columns([1, 3])
+with col_btn:
+    if st.button("🍺 Filtro Produto", use_container_width=True):
+        st.session_state.show_filtro_produto = not st.session_state.show_filtro_produto
+
+# Mostra resumo dos filtros ativos
+filtros_ativos = {k: v for k, v in st.session_state.filtros_produto.items() if v and v != "Todos"}
+with col_status:
+    if filtros_ativos:
+        resumo = " • ".join([f"<b>{k}:</b> {v}" for k, v in filtros_ativos.items()])
+        st.markdown(f'<div class="filtro-produto-ativo">🎯 Filtros ativos: {resumo}</div>',
+                    unsafe_allow_html=True)
+
+# Popover de filtros de produto
+if st.session_state.show_filtro_produto:
+    with st.expander("🎛️ Configurar filtros de produto", expanded=True):
+        colunas_produto_existentes = [c for c in COLUNAS_PRODUTO if c in df.columns]
+
+        n_cols = 3
+        for i in range(0, len(colunas_produto_existentes), n_cols):
+            cols_filtro = st.columns(n_cols)
+            for j, coluna in enumerate(colunas_produto_existentes[i:i+n_cols]):
+                with cols_filtro[j]:
+                    valores = ["Todos"] + sorted(df[coluna].dropna().astype(str).unique().tolist())
+                    valor_atual = st.session_state.filtros_produto.get(coluna, "Todos")
+                    if valor_atual not in valores:
+                        valor_atual = "Todos"
+                    escolha = st.selectbox(coluna, valores,
+                                           index=valores.index(valor_atual),
+                                           key=f"fp_{coluna}")
+                    st.session_state.filtros_produto[coluna] = escolha
+
+        col_a, col_b = st.columns([1, 1])
+        with col_a:
+            if st.button("🧹 Limpar filtros de produto", use_container_width=True):
+                st.session_state.filtros_produto = {}
+                st.rerun()
+        with col_b:
+            if st.button("✅ Aplicar e fechar", use_container_width=True):
+                st.session_state.show_filtro_produto = False
+                st.rerun()
+
+# Aplica os filtros de produto ao df_filtrado
+for coluna, valor in st.session_state.filtros_produto.items():
+    if valor and valor != "Todos" and coluna in df_filtrado.columns:
+        df_filtrado = df_filtrado[df_filtrado[coluna].astype(str) == valor]
+
+# ------------------------------------------------------------
 # KPIs
 # ------------------------------------------------------------
 st.markdown("---")
@@ -368,7 +530,7 @@ st.markdown("---")
 # ------------------------------------------------------------
 # RESUMO POR CLIENTE
 # ------------------------------------------------------------
-st.markdown("### 🏪 Clientes")
+st.markdown('<div class="section-title">🏪 Clientes</div>', unsafe_allow_html=True)
 
 if "Nome PDV" not in df_filtrado.columns:
     st.warning("Base sem coluna 'Nome fantasia'.")
@@ -376,7 +538,8 @@ if "Nome PDV" not in df_filtrado.columns:
 
 hash_filtros = hash((len(df_filtrado),
                      str(df_filtrado.index.min()),
-                     str(df_filtrado.index.max())))
+                     str(df_filtrado.index.max()),
+                     str(sorted(st.session_state.filtros_produto.items()))))
 resumo_clientes = calcular_resumos(hash_filtros, df_filtrado)
 
 if resumo_clientes.empty:
@@ -399,7 +562,7 @@ with col_pag:
 
 inicio = (pagina - 1) * CARDS_POR_PAGINA
 fim = inicio + CARDS_POR_PAGINA
-clientes_pagina = resumo_clientes.iloc[inicio:fim]
+clientes_pagina = resumo_
 
 # ------------------------------------------------------------
 # CARDS POR CLIENTE
