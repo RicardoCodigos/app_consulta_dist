@@ -1,6 +1,6 @@
 # ============================================================
-# PAINEL DE DISTRIBUIÇÃO – DIRETORIA EIXO ATLÂNTICO
-# Versão 4.2 – Sem loops, sem travamento
+# PAINEL DE DISTRIBUICAO - DIRETORIA EIXO ATLANTICO
+# Versao 4.3 - Validado sem erros de sintaxe
 # Autor: Ricardo Marchette Sabino
 # ============================================================
 
@@ -10,10 +10,10 @@ import os
 from datetime import datetime
 
 # ------------------------------------------------------------
-# CONFIGURAÇÃO BÁSICA
+# CONFIGURACAO BASICA
 # ------------------------------------------------------------
 st.set_page_config(
-    page_title="Painel de Distribuição | Diretoria Eixo Atlântico",
+    page_title="Painel de Distribuicao | Diretoria Eixo Atlantico",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -131,20 +131,21 @@ COLUNAS_IGNORAR = ["Feito antes?", "Chave"]
 FILTROS_PADRAO = ["CDD", "Setor", "PDV", "Nome PDV"]
 
 # ------------------------------------------------------------
-# FUNÇÃO DE LEITURA DA BASE (CACHE)
+# FUNCAO DE LEITURA DA BASE (CACHE)
 # ------------------------------------------------------------
 @st.cache_data(show_spinner="Carregando base...")
 def carregar_base_cache(timestamp_arquivo):
     if not os.path.exists(ARQUIVO_BASE):
         return None
     df = pd.read_parquet(ARQUIVO_BASE)
-    for col in ["CDD", "Setor", "Tipo pedido", "Situação pedido", "Situação atendimento"] + COLUNAS_PRODUTO:
+    cols_categorizar = ["CDD", "Setor", "Tipo pedido", "Situação pedido", "Situação atendimento"] + COLUNAS_PRODUTO
+    for col in cols_categorizar:
         if col in df.columns:
             df[col] = df[col].astype("category")
     return df
 
 # ------------------------------------------------------------
-# REGRA DE DISTRIBUIÇÃO
+# REGRA DE DISTRIBUICAO
 # ------------------------------------------------------------
 def aplicar_regra_distribuicao(df):
     if "Distribuição" not in df.columns:
@@ -218,7 +219,8 @@ def ler_timestamp():
 # AUXILIARES VISUAIS
 # ------------------------------------------------------------
 def badge_status(texto, tipo="ok"):
-    cor = {"ok": "status-ok", "pend": "status-pend", "erro": "status-erro"}.get(tipo, "status-pend")
+    cor_map = {"ok": "status-ok", "pend": "status-pend", "erro": "status-erro"}
+    cor = cor_map.get(tipo, "status-pend")
     return f'<span class="pedido-status {cor}">{texto}</span>'
 
 def classifica_situacao(valor):
@@ -230,7 +232,7 @@ def classifica_situacao(valor):
     return "pend"
 
 # ------------------------------------------------------------
-# CABEÇALHO
+# CABECALHO
 # ------------------------------------------------------------
 st.markdown("""
 <div class="header">
@@ -297,9 +299,10 @@ if df is None or df.empty:
     st.info("⏳ Base vazia.")
     st.stop()
 
+total_linhas_str = f"{len(df):,}".replace(",", ".")
 st.markdown(
     f"<div class='info-bar'>🔄 Base atualizada em <b>{ultima_atualizacao}</b> "
-    f"&nbsp;|&nbsp; Total de linhas: <b>{len(df):,}</b></div>".replace(",", "."),
+    f"&nbsp;|&nbsp; Total de linhas: <b>{total_linhas_str}</b></div>",
     unsafe_allow_html=True
 )
 
@@ -311,10 +314,11 @@ st.markdown('<div class="section-title">🔎 Filtros principais</div>', unsafe_a
 df_filtrado = df
 filtros_disponiveis = [c for c in FILTROS_PADRAO if c in df.columns]
 
-cols = st.columns(min(len(filtros_disponiveis), 4) or 1)
+n_principais = min(len(filtros_disponiveis), 4) or 1
+cols = st.columns(n_principais)
 for i, coluna in enumerate(filtros_disponiveis):
     valores = ["Todos"] + sorted(df[coluna].dropna().astype(str).unique().tolist())
-    with cols[i % len(cols)]:
+    with cols[i % n_principais]:
         escolha = st.selectbox(coluna, valores, key=f"f_{coluna}")
         if escolha != "Todos":
             df_filtrado = df_filtrado[df_filtrado[coluna].astype(str) == escolha]
@@ -325,9 +329,15 @@ if "Data entrada" in df.columns:
     with col_d1:
         datas = df["Data entrada"].dropna()
         if not datas.empty:
-            min_d, max_d = datas.min().date(), datas.max().date()
-            faixa = st.date_input("Data entrada:", value=(min_d, max_d),
-                                  min_value=min_d, max_value=max_d, key="f_entrada")
+            min_d = datas.min().date()
+            max_d = datas.max().date()
+            faixa = st.date_input(
+                "Data entrada:",
+                value=(min_d, max_d),
+                min_value=min_d,
+                max_value=max_d,
+                key="f_entrada"
+            )
             if isinstance(faixa, tuple) and len(faixa) == 2:
                 d1, d2 = faixa
                 df_filtrado = df_filtrado[
@@ -339,9 +349,15 @@ if "Data entrega" in df.columns:
     with col_d2:
         datas = df["Data entrega"].dropna()
         if not datas.empty:
-            min_d, max_d = datas.min().date(), datas.max().date()
-            faixa = st.date_input("Data entrega:", value=(min_d, max_d),
-                                  min_value=min_d, max_value=max_d, key="f_entrega")
+            min_d = datas.min().date()
+            max_d = datas.max().date()
+            faixa = st.date_input(
+                "Data entrega:",
+                value=(min_d, max_d),
+                min_value=min_d,
+                max_value=max_d,
+                key="f_entrega"
+            )
             if isinstance(faixa, tuple) and len(faixa) == 2:
                 d1, d2 = faixa
                 df_filtrado = df_filtrado[
@@ -350,24 +366,22 @@ if "Data entrega" in df.columns:
                 ]
 
 # ------------------------------------------------------------
-# FILTRO PRODUTO (expander simples, sem rerun)
+# FILTRO PRODUTO (expander simples)
 # ------------------------------------------------------------
 with st.expander("🍺 Filtro Produto (clique para abrir)", expanded=False):
     colunas_produto_existentes = [c for c in COLUNAS_PRODUTO if c in df.columns]
-
-    n_cols = 3
     filtros_produto_escolhidos = {}
 
-    for i in range(0, len(colunas_produto_existentes), n_cols):
-        cols_filtro = st.columns(n_cols)
-        bloco = colunas_produto_existentes[i:i + n_cols]
+    n_cols_prod = 3
+    for i in range(0, len(colunas_produto_existentes), n_cols_prod):
+        cols_filtro = st.columns(n_cols_prod)
+        bloco = colunas_produto_existentes[i:i + n_cols_prod]
         for j, coluna in enumerate(bloco):
             with cols_filtro[j]:
                 valores = ["Todos"] + sorted(df[coluna].dropna().astype(str).unique().tolist())
                 escolha = st.selectbox(coluna, valores, key=f"fp_{coluna}")
                 filtros_produto_escolhidos[coluna] = escolha
 
-    # Aplica filtros
     for coluna, valor in filtros_produto_escolhidos.items():
         if valor != "Todos":
             df_filtrado = df_filtrado[df_filtrado[coluna].astype(str) == valor]
@@ -399,7 +413,7 @@ k4.metric("📈 Taxa", f"{taxa:.1f}%")
 st.markdown("---")
 
 # ------------------------------------------------------------
-# RESUMO POR CLIENTE (sem cache, cálculo direto)
+# RESUMO POR CLIENTE
 # ------------------------------------------------------------
 st.markdown('<div class="section-title">🏪 Clientes</div>', unsafe_allow_html=True)
 
@@ -407,7 +421,6 @@ if "Nome PDV" not in df_filtrado.columns or df_filtrado.empty:
     st.info("Nenhum pedido encontrado com os filtros atuais.")
     st.stop()
 
-# Cálculo direto e rápido
 resumo_clientes = df_filtrado.groupby(["Nome PDV", "PDV"], observed=True).agg(
     qtd_pedidos=("Número pedido", "nunique"),
     qtd_distrib=("Distribuição", "sum")
@@ -417,7 +430,7 @@ resumo_clientes["qtd_distrib"] = resumo_clientes["qtd_distrib"].fillna(0).astype
 resumo_clientes = resumo_clientes.sort_values("qtd_pedidos", ascending=False).reset_index(drop=True)
 
 # ------------------------------------------------------------
-# PAGINAÇÃO
+# PAGINACAO
 # ------------------------------------------------------------
 total_clientes = len(resumo_clientes)
 total_paginas = max(1, (total_clientes - 1) // CARDS_POR_PAGINA + 1)
@@ -461,13 +474,16 @@ for _, linha in clientes_pagina.iterrows():
                 sit_p = str(primeira.get("Situação pedido", "—"))
                 sit_a = str(primeira.get("Situação atendimento", "—"))
 
-                pedido_eh_distrib = int(itens["Distribuição"].max()) if "Distribuição" in itens.columns else 0
+                if "Distribuição" in itens.columns:
+                    pedido_eh_distrib = int(itens["Distribuição"].max())
+                else:
+                    pedido_eh_distrib = 0
 
-                badge_distrib = (
-                    '<span class="pedido-status status-ok">✅ Distribuição</span>'
-                    if pedido_eh_distrib == 1 else
-                    '<span class="pedido-status status-erro">❌ Não distribuição</span>'
-                )
+                if pedido_eh_distrib == 1:
+                    badge_distrib = '<span class="pedido-status status-ok">✅ Distribuição</span>'
+                else:
+                    badge_distrib = '<span class="pedido-status status-erro">❌ Não distribuição</span>'
+
                 badges = (
                     badge_distrib +
                     badge_status(tipo, "ok") +
@@ -477,8 +493,16 @@ for _, linha in clientes_pagina.iterrows():
 
                 data_entrada = primeira.get("Data entrada", "")
                 data_entrega = primeira.get("Data entrega", "")
-                data_entrada_str = data_entrada.strftime("%d/%m/%Y %H:%M") if pd.notna(data_entrada) else "—"
-                data_entrega_str = data_entrega.strftime("%d/%m/%Y") if pd.notna(data_entrega) else "—"
+
+                if pd.notna(data_entrada):
+                    data_entrada_str = data_entrada.strftime("%d/%m/%Y %H:%M")
+                else:
+                    data_entrada_str = "—"
+
+                if pd.notna(data_entrega):
+                    data_entrega_str = data_entrega.strftime("%d/%m/%Y")
+                else:
+                    data_entrega_str = "—"
 
                 st.markdown(
                     f"**Pedido {num_pedido}** &nbsp;&nbsp; "
@@ -487,11 +511,12 @@ for _, linha in clientes_pagina.iterrows():
                     unsafe_allow_html=True
                 )
 
-                colunas_itens = [c for c in [
+                colunas_disponiveis_itens = [
                     "Cód. produto", "Desc. produto",
                     "Qtd venda (cx)", "Volume (hl)", "Valor líquido (R$)",
                     "Distribuição"
-                ] if c in itens.columns]
+                ]
+                colunas_itens = [c for c in colunas_disponiveis_itens if c in itens.columns]
 
                 itens_exibir = itens[colunas_itens].copy().reset_index(drop=True)
                 if "Distribuição" in itens_exibir.columns:
@@ -501,4 +526,3 @@ for _, linha in clientes_pagina.iterrows():
 
                 st.dataframe(itens_exibir, use_container_width=True, hide_index=True)
                 st.markdown("---")
-``
