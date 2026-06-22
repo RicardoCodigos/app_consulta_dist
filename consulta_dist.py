@@ -1,6 +1,8 @@
 # ============================================================
 # PAINEL DE DISTRIBUIÇÃO – CORA
-# Versão 3.1 – OTIMIZADA para bases grandes (20k+ linhas)
+# Versão 3.3 – Sem busca livre, sem auto-refresh,
+# Distribuição deduplicada por PDV + Produto
+# (data de entrega MAIS PRÓXIMA DE HOJE)
 # Autor: Ricardo Marchette Sabino
 # ============================================================
 
@@ -8,7 +10,6 @@ import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
-from streamlit_autorefresh import st_autorefresh
 
 # ------------------------------------------------------------
 # CONFIGURAÇÃO BÁSICA
@@ -64,9 +65,9 @@ footer { visibility: hidden; }
 # CONSTANTES
 # ------------------------------------------------------------
 ARQUIVO_BASE = "base_pedidos.parquet"
-INTERVALO_REFRESH_MS = 60_000   # ⚡ aumentado de 30s para 60s
+ARQUIVO_TIMESTAMP = "ultima_atualizacao.txt"
 ABA_CORA = "CORA"
-CARDS_POR_PAGINA = 20            # ⚡ paginação dos clientes
+CARDS_POR_PAGINA = 20
 
 COLUNAS_MAP = {
     "Cód. unidade entrega": "CDD",
@@ -90,65 +91,84 @@ COLUNAS_MAP = {
 FILTROS_PADRAO = ["CDD", "Setor", "PDV", "Nome PDV"]
 
 # ------------------------------------------------------------
-# ⚡ AUTO-REFRESH (60s, só pra vendedor)
+# FUNÇÕES COM CACHE
 # ------------------------------------------------------------
-if not st.session_state.get("admin_logado", False):
-    st_autorefresh(interval=INTERVALO_REFRESH_MS, key="refresh_vendedor")
-
-# ------------------------------------------------------------
-# ⚡ FUNÇÕES COM CACHE
-# ------------------------------------------------------------
-
 @st.cache_data(show_spinner="Carregando base...")
 def carregar_base_cache(timestamp_arquivo):
-    """
-    Lê o parquet do disco e converte tipos otimizados.
-    O timestamp serve pra invalidar o cache quando a base é atualizada.
-    """
     if not os.path.exists(ARQUIVO_BASE):
         return None
-
     df = pd.read_parquet(ARQUIVO_BASE)
-
-    # ⚡ Tipos otimizados (reduz uso de memória em até 70%)
     for col in ["CDD", "Setor", "Tipo pedido", "Situação pedido", "Situação atendimento"]:
         if col in df.columns:
             df[col] = df[col].astype("category")
-
     return df
 
 @st.cache_data(show_spinner=False)
-def calcular_resumos(df_hash, df):
-    """
-    Pré-calcula resumos por cliente (pedidos únicos + distribuições).
-    Roda uma vez e fica em cache.
-    """
+def calcular_resumos(hash_filtros, df):
     if "Número pedido" not in df.columns:
         return pd.DataFrame()
 
-    # Agrupa em uma única passada
     resumo = df.groupby(["Nome PDV", "PDV"], observed=True).agg(
         qtd_pedidos=("Número pedido", "nunique"),
-        qtd_linhas=("Número pedido", "count")
     ).reset_index()
 
-    # Calcula distribuições por cliente
     if "Distribuição" in df.columns:
         pedidos_distrib = df.groupby(
             ["Nome PDV", "PDV", "Número pedido"], observed=True
         )["Distribuição"].max().reset_index()
-
-        distrib_por_cliente = pedidos_distrib.groupby(
+        distrib_cliente = pedidos_distrib.groupby(
             ["Nome PDV", "PDV"], observed=True
-        )["Distribuição"].sum().reset_index()
-        distrib_por_cliente = distrib_por_cliente.rename(columns={"Distribuição": "qtd_distrib"})
-
-        resumo = resumo.merge(distrib_por_cliente, on=["Nome PDV", "PDV"], how="left")
+        )["Distribuição"].sum().reset_index().rename(columns={"Distribuição": "qtd_distrib"})
+        resumo = resumo.merge(distrib_cliente, on=["Nome PDV", "PDV"], how="left")
     else:
         resumo["qtd_distrib"] = 0
 
     return resumo
 
+# ------------------------------------------------------------
+# REGRA DE DISTRIBUIÇÃO (data de entrega MAIS PRÓXIMA DE HOJE)
+# ------------------------------------------------------------
+def aplicar_regra_distribuicao(df):
+    """
+    Regra:
+    - Mesmo produto vendido várias vezes pro mesmo PDV → aparece TODAS as vezes
+    - Mas só a linha com a DATA DE ENTREGA MAIS PRÓXIMA DE HOJE
+      conta como Distribuição = 1
+    - As outras viram Distribuição = 0 (evita duplicidade)
+    """
+    if "Distribuição" not in df.columns:
+        return df
+    if not all(c in df.columns for c in ["PDV", "Cód. produto", "Data entrega"]):
+        return df
+
+    df_dist = df[df["Distribuição"] == 1].copy()
+    if df_dist.empty:
+        return df
+
+    df_dist_validas = df_dist.dropna(subset=["Data entrega"])
+    if df_dist_validas.empty:
+        return df
+
+    # ⚡ Calcula a distância (em dias) de cada data até HOJE
+    hoje = pd.Timestamp(datetime.now().date())
+    df_dist_validas = df_dist_validas.assign(
+        _dist_dias=(df_dist_validas["Data entrega"] - hoje).abs()
+    )
+
+    # Para cada (PDV, Cód. produto), pega o índice da menor distância
+    idx_manter = df_dist_validas.groupby(
+        ["PDV", "Cód. produto"], observed=True
+    )["_dist_dias"].idxmin().values
+
+    df["Distribuição"] = 0
+    df.loc[idx_manter, "Distribuição"] = 1
+    df["Distribuição"] = df["Distribuição"].astype("int8")
+
+    return df
+
+# ------------------------------------------------------------
+# LEITURA E SALVAMENTO
+# ------------------------------------------------------------
 def ler_arquivo_upload(arquivo):
     df = pd.read_excel(arquivo, sheet_name=ABA_CORA)
     df.columns = df.columns.str.strip()
@@ -162,18 +182,29 @@ def ler_arquivo_upload(arquivo):
     if "Distribuição" in df.columns:
         df["Distribuição"] = pd.to_numeric(df["Distribuição"], errors="coerce").fillna(0).astype("int8")
 
-    # ⚡ Converte numéricos pra tipos menores
     for col in ["Qtd venda (cx)", "Volume (hl)", "Valor líquido (R$)"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
 
+    df = aplicar_regra_distribuicao(df)
     return df
 
 def salvar_base(df):
     df.to_parquet(ARQUIVO_BASE, index=False, compression="snappy")
-    # ⚡ Limpa o cache pra forçar recarregamento
+    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+    with open(ARQUIVO_TIMESTAMP, "w", encoding="utf-8") as f:
+        f.write(agora)
     st.cache_data.clear()
 
+def ler_timestamp():
+    if os.path.exists(ARQUIVO_TIMESTAMP):
+        with open(ARQUIVO_TIMESTAMP, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    return "—"
+
+# ------------------------------------------------------------
+# AUXILIARES VISUAIS
+# ------------------------------------------------------------
 def badge_status(texto, tipo="ok"):
     cor = {"ok": "status-ok", "pend": "status-pend", "erro": "status-erro"}.get(tipo, "status-pend")
     return f'<span class="pedido-status {cor}">{texto}</span>'
@@ -192,7 +223,7 @@ def classifica_situacao(valor):
 st.markdown("""
 <div class="header">
     <h1>📊 Painel de Distribuição – CORA</h1>
-    <p>Consulta de pedidos em tempo real – Operação Comercial</p>
+    <p>Consulta de pedidos – Operação Comercial</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -242,15 +273,15 @@ if st.session_state.admin_logado:
                 st.error(f"Erro: {e}")
 
 # ------------------------------------------------------------
-# ⚡ CARREGA COM CACHE
+# CARREGA BASE
 # ------------------------------------------------------------
 if not os.path.exists(ARQUIVO_BASE):
     st.info("⏳ Base ainda não disponível.")
     st.stop()
 
-timestamp = os.path.getmtime(ARQUIVO_BASE)
-df = carregar_base_cache(timestamp)
-ultima_atualizacao = datetime.fromtimestamp(timestamp).strftime("%d/%m/%Y %H:%M")
+timestamp_arquivo = os.path.getmtime(ARQUIVO_BASE)
+df = carregar_base_cache(timestamp_arquivo)
+ultima_atualizacao = ler_timestamp()
 
 if df is None or df.empty:
     st.info("⏳ Base vazia.")
@@ -258,8 +289,7 @@ if df is None or df.empty:
 
 st.markdown(
     f"<p style='color:#5C6B7A;font-size:13px;'>🔄 Base atualizada em <b>{ultima_atualizacao}</b> "
-    f"&nbsp;|&nbsp; Total de linhas: <b>{len(df):,}</b>".replace(",", ".") +
-    "&nbsp;|&nbsp; Atualização automática a cada 60s</p>",
+    f"&nbsp;|&nbsp; Total de linhas: <b>{len(df):,}</b>".replace(",", ".") + "</p>",
     unsafe_allow_html=True
 )
 
@@ -279,7 +309,7 @@ for i, coluna in enumerate(filtros_disponiveis):
         if escolha != "Todos":
             df_filtrado = df_filtrado[df_filtrado[coluna].astype(str) == escolha]
 
-# Datas
+# Filtros de data
 col_d1, col_d2 = st.columns(2)
 if "Data entrada" in df.columns:
     with col_d1:
@@ -309,43 +339,34 @@ if "Data entrega" in df.columns:
                     (df_filtrado["Data entrega"].dt.date <= d2)
                 ]
 
-# Busca livre
-busca = st.text_input("🔍 Buscar por nº do pedido, PDV ou Nome PDV:")
-if busca:
-    mascara = pd.Series([False] * len(df_filtrado), index=df_filtrado.index)
-    for c in ["Número pedido", "PDV", "Nome PDV"]:
-        if c in df_filtrado.columns:
-            mascara |= df_filtrado[c].astype(str).str.contains(busca, case=False, na=False)
-    df_filtrado = df_filtrado[mascara]
-
 # ------------------------------------------------------------
-# KPIs (calculados rapidamente)
+# KPIs
 # ------------------------------------------------------------
 st.markdown("---")
 
 if "Número pedido" in df_filtrado.columns:
     total_pedidos = df_filtrado["Número pedido"].nunique()
-    if "Distribuição" in df_filtrado.columns:
-        distribuidos = (df_filtrado.groupby("Número pedido", observed=True)["Distribuição"].max() == 1).sum()
-    else:
-        distribuidos = 0
 else:
     total_pedidos = len(df_filtrado)
+
+if "Distribuição" in df_filtrado.columns:
+    distribuidos = int(df_filtrado["Distribuição"].sum())
+else:
     distribuidos = 0
 
-nao_distribuidos = total_pedidos - distribuidos
+nao_distribuidos = max(0, total_pedidos - distribuidos)
 taxa = (distribuidos / total_pedidos * 100) if total_pedidos else 0
 
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Pedidos", f"{total_pedidos:,}".replace(",", "."))
-k2.metric("✅ Distribuição", f"{int(distribuidos):,}".replace(",", "."))
-k3.metric("❌ Não distribuição", f"{int(nao_distribuidos):,}".replace(",", "."))
+k2.metric("✅ Distribuição", f"{distribuidos:,}".replace(",", "."))
+k3.metric("❌ Não distribuição", f"{nao_distribuidos:,}".replace(",", "."))
 k4.metric("📈 Taxa", f"{taxa:.1f}%")
 
 st.markdown("---")
 
 # ------------------------------------------------------------
-# ⚡ RESUMO POR CLIENTE (com cache)
+# RESUMO POR CLIENTE
 # ------------------------------------------------------------
 st.markdown("### 🏪 Clientes")
 
@@ -353,19 +374,19 @@ if "Nome PDV" not in df_filtrado.columns:
     st.warning("Base sem coluna 'Nome fantasia'.")
     st.stop()
 
-# Hash dos filtros pra invalidar cache quando muda
-hash_filtros = hash((len(df_filtrado), busca, str(df_filtrado.index.min()), str(df_filtrado.index.max())))
+hash_filtros = hash((len(df_filtrado),
+                     str(df_filtrado.index.min()),
+                     str(df_filtrado.index.max())))
 resumo_clientes = calcular_resumos(hash_filtros, df_filtrado)
 
 if resumo_clientes.empty:
     st.info("Nenhum pedido encontrado com os filtros atuais.")
     st.stop()
 
-# Ordena por quantidade de pedidos (mais relevantes primeiro)
 resumo_clientes = resumo_clientes.sort_values("qtd_pedidos", ascending=False).reset_index(drop=True)
 
 # ------------------------------------------------------------
-# ⚡ PAGINAÇÃO
+# PAGINAÇÃO
 # ------------------------------------------------------------
 total_clientes = len(resumo_clientes)
 total_paginas = max(1, (total_clientes - 1) // CARDS_POR_PAGINA + 1)
@@ -381,7 +402,7 @@ fim = inicio + CARDS_POR_PAGINA
 clientes_pagina = resumo_clientes.iloc[inicio:fim]
 
 # ------------------------------------------------------------
-# ⚡ RENDERIZA SÓ OS CARDS DA PÁGINA ATUAL
+# CARDS POR CLIENTE
 # ------------------------------------------------------------
 for _, linha in clientes_pagina.iterrows():
     nome  = str(linha["Nome PDV"]) if pd.notna(linha["Nome PDV"]) else "—"
@@ -393,9 +414,7 @@ for _, linha in clientes_pagina.iterrows():
               f"|   📦 {qtd_p} pedidos   "
               f"|   ✅ {qtd_d} distribuições")
 
-    # ⚡ Expander fechado por padrão (só carrega conteúdo quando clica)
     with st.expander(titulo, expanded=False):
-        # Filtra só os pedidos desse cliente
         dados_cliente = df_filtrado[
             (df_filtrado["Nome PDV"] == linha["Nome PDV"]) &
             (df_filtrado["PDV"] == linha["PDV"])
@@ -408,11 +427,12 @@ for _, linha in clientes_pagina.iterrows():
                 tipo  = str(primeira.get("Tipo pedido", "—"))
                 sit_p = str(primeira.get("Situação pedido", "—"))
                 sit_a = str(primeira.get("Situação atendimento", "—"))
-                distrib = int(primeira.get("Distribuição", 0)) if "Distribuição" in itens.columns else 0
+
+                pedido_eh_distrib = int(itens["Distribuição"].max()) if "Distribuição" in itens.columns else 0
 
                 badge_distrib = (
                     '<span class="pedido-status status-ok">✅ Distribuição</span>'
-                    if distrib == 1 else
+                    if pedido_eh_distrib == 1 else
                     '<span class="pedido-status status-erro">❌ Não distribuição</span>'
                 )
                 badges = (
@@ -436,11 +456,15 @@ for _, linha in clientes_pagina.iterrows():
 
                 colunas_itens = [c for c in [
                     "Cód. produto", "Desc. produto",
-                    "Qtd venda (cx)", "Volume (hl)", "Valor líquido (R$)"
+                    "Qtd venda (cx)", "Volume (hl)", "Valor líquido (R$)",
+                    "Distribuição"
                 ] if c in itens.columns]
 
-                st.dataframe(
-                    itens[colunas_itens].reset_index(drop=True),
-                    use_container_width=True, hide_index=True
-                )
+                itens_exibir = itens[colunas_itens].copy().reset_index(drop=True)
+                if "Distribuição" in itens_exibir.columns:
+                    itens_exibir["Distribuição"] = itens_exibir["Distribuição"].map(
+                        {1: "✅", 0: "❌"}
+                    ).fillna("❌")
+
+                st.dataframe(itens_exibir, use_container_width=True, hide_index=True)
                 st.markdown("---")
