@@ -1,6 +1,6 @@
 # ============================================================
 # PAINEL DE DISTRIBUICAO - DIRETORIA EIXO ATLANTICO
-# Versao 5.0 - Definitiva, validada e otimizada
+# Versao 6.0 - Filtros encadeados, metricas revisadas
 # Autor: Ricardo Marchette Sabino
 # ============================================================
 
@@ -50,13 +50,13 @@ st.markdown("""
     border-left: 4px solid #0B2545;
 }
 [data-testid="stMetricLabel"] {
-    color: #5C6B7A !important; font-size: 13px !important;
+    color: #5C6B7A !important; font-size: 12px !important;
     font-weight: 500 !important; text-transform: uppercase;
     letter-spacing: 0.4px;
 }
 [data-testid="stMetricValue"] {
     color: #0B2545 !important;
-    font-size: 28px !important; font-weight: 700 !important;
+    font-size: 26px !important; font-weight: 700 !important;
 }
 
 .stButton>button {
@@ -68,6 +68,14 @@ st.markdown("""
     background-color: #13315C; color: white;
 }
 
+.btn-limpar > button {
+    background-color: #E5E9F0 !important;
+    color: #0B2545 !important;
+}
+.btn-limpar > button:hover {
+    background-color: #C8D0DC !important;
+}
+
 .pedido-status {
     display: inline-block; padding: 4px 10px;
     border-radius: 6px; font-size: 12px;
@@ -76,6 +84,7 @@ st.markdown("""
 .status-ok    { background-color: #DFF5E1; color: #1F7A3A; }
 .status-pend  { background-color: #FFF4D6; color: #8A6D00; }
 .status-erro  { background-color: #FBE3E3; color: #A12626; }
+.status-distrib { background-color: #E8F0FE; color: #0B2545; font-weight: 600; }
 
 .section-title {
     color: #0B2545; font-size: 17px; font-weight: 600;
@@ -102,8 +111,9 @@ ARQUIVO_TIMESTAMP = "ultima_atualizacao.txt"
 ABA_CORA = "CORA"
 CARDS_POR_PAGINA = 20
 
+# CORRECAO 1: CDD agora vem de "Cod. unidade venda" (nao mais "Cod. unidade entrega")
 COLUNAS_MAP = {
-    "C\u00f3d. unidade entrega": "CDD",
+    "C\u00f3d. unidade venda": "CDD",
     "C\u00f3d. setor": "Setor",
     "C\u00f3d. cliente": "PDV",
     "Nome fantasia": "Nome PDV",
@@ -130,8 +140,12 @@ COLUNAS_PRODUTO = [
 COLUNAS_IGNORAR = ["Feito antes?", "Chave"]
 FILTROS_PADRAO = ["CDD", "Setor", "PDV", "Nome PDV"]
 
+COL_DIST = "Distribui\u00e7\u00e3o"
+COL_NUM_PEDIDO = "N\u00famero pedido"
+COL_PRODUTO = "C\u00f3d. produto"
+
 # ------------------------------------------------------------
-# FUNCAO DE LEITURA DA BASE (CACHE)
+# CACHE
 # ------------------------------------------------------------
 @st.cache_data(show_spinner="Carregando base...")
 def carregar_base_cache(timestamp_arquivo):
@@ -148,18 +162,15 @@ def carregar_base_cache(timestamp_arquivo):
     return df
 
 # ------------------------------------------------------------
-# REGRA DE DISTRIBUICAO (mais proxima de hoje)
+# REGRA DE DISTRIBUICAO
 # ------------------------------------------------------------
 def aplicar_regra_distribuicao(df):
-    col_dist = "Distribui\u00e7\u00e3o"
-    col_prod = "C\u00f3d. produto"
-
-    if col_dist not in df.columns:
+    if COL_DIST not in df.columns:
         return df
-    if not all(c in df.columns for c in ["PDV", col_prod, "Data entrega"]):
+    if not all(c in df.columns for c in ["PDV", COL_PRODUTO, "Data entrega"]):
         return df
 
-    df_dist = df[df[col_dist] == 1].copy()
+    df_dist = df[df[COL_DIST] == 1].copy()
     if df_dist.empty:
         return df
 
@@ -172,26 +183,23 @@ def aplicar_regra_distribuicao(df):
         _dist_dias=(df_dist_validas["Data entrega"] - hoje).abs()
     )
     idx_manter = df_dist_validas.groupby(
-        ["PDV", col_prod], observed=True
+        ["PDV", COL_PRODUTO], observed=True
     )["_dist_dias"].idxmin().values
 
-    df[col_dist] = 0
-    df.loc[idx_manter, col_dist] = 1
-    df[col_dist] = df[col_dist].astype("int8")
+    df[COL_DIST] = 0
+    df.loc[idx_manter, COL_DIST] = 1
+    df[COL_DIST] = df[COL_DIST].astype("int8")
     return df
 
 # ------------------------------------------------------------
-# UPLOAD OTIMIZADO
+# UPLOAD
 # ------------------------------------------------------------
 def ler_arquivo_upload(arquivo, progress_bar=None, status_text=None):
-    """Le o Excel da aba CORA de forma otimizada."""
-
     if status_text:
-        status_text.text("Lendo arquivo Excel (pode levar alguns segundos)...")
+        status_text.text("Lendo arquivo Excel...")
     if progress_bar:
         progress_bar.progress(10)
 
-    # Tenta calamine (muito mais rapido), fallback para openpyxl
     try:
         df = pd.read_excel(arquivo, sheet_name=ABA_CORA, engine="calamine")
     except Exception:
@@ -216,19 +224,15 @@ def ler_arquivo_upload(arquivo, progress_bar=None, status_text=None):
     if progress_bar:
         progress_bar.progress(65)
 
-    # Datas
     for col in ["Data entrada", "Data entrega"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    # Distribuicao
-    col_dist = "Distribui\u00e7\u00e3o"
-    if col_dist in df.columns:
-        df[col_dist] = pd.to_numeric(
-            df[col_dist], errors="coerce"
+    if COL_DIST in df.columns:
+        df[COL_DIST] = pd.to_numeric(
+            df[COL_DIST], errors="coerce"
         ).fillna(0).astype("int8")
 
-    # Numericos
     for col in ["Qtd venda (cx)", "Volume (hl)", "Valor l\u00edquido (R$)"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
@@ -246,9 +250,6 @@ def ler_arquivo_upload(arquivo, progress_bar=None, status_text=None):
     return df
 
 def salvar_base(df):
-    """Salva a base em parquet, forcando colunas object para string."""
-    # CRITICO: forca TODAS as colunas object para string
-    # Evita erro do parquet com tipos mistos
     for col in df.select_dtypes(include=["object"]).columns:
         df[col] = df[col].astype(str).replace(
             {"nan": "", "None": "", "NaT": "", "<NA>": ""}
@@ -299,9 +300,15 @@ if "admin_logado" not in st.session_state:
     st.session_state.admin_logado = False
 if "upload_key" not in st.session_state:
     st.session_state.upload_key = 0
+if "filtros_version" not in st.session_state:
+    st.session_state.filtros_version = 0
+
+def limpar_filtros_principais():
+    # Limpa as keys dos filtros principais incrementando a versao
+    st.session_state.filtros_version += 1
 
 # ------------------------------------------------------------
-# SIDEBAR - LOGIN E UPLOAD
+# SIDEBAR
 # ------------------------------------------------------------
 with st.sidebar:
     st.markdown("### \U0001F510 Acesso restrito")
@@ -349,7 +356,6 @@ with st.sidebar:
                 n = f"{len(df_novo):,}".replace(",", ".")
                 st.success(f"\u2705 Base atualizada! {n} linhas.")
 
-                # Incrementa a chave pra resetar o uploader e evitar loop
                 st.session_state.upload_key += 1
                 st.rerun()
             except Exception as e:
@@ -378,27 +384,50 @@ st.markdown(
 )
 
 # ------------------------------------------------------------
-# FILTROS PRINCIPAIS
+# FILTROS PRINCIPAIS COM ENCADEAMENTO
 # ------------------------------------------------------------
-st.markdown('<div class="section-title">Filtros principais</div>', unsafe_allow_html=True)
+col_titulo, col_limpar = st.columns([4, 1])
+with col_titulo:
+    st.markdown('<div class="section-title">Filtros principais</div>', unsafe_allow_html=True)
+with col_limpar:
+    st.markdown('<div class="btn-limpar">', unsafe_allow_html=True)
+    if st.button("\U0001F9F9 Limpar filtros", key="btn_limpar_principal"):
+        limpar_filtros_principais()
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
-df_filtrado = df
+# Funcao auxiliar para aplicar filtro encadeado
+def aplicar_selectbox_encadeado(df_atual, df_origem, coluna, label, key):
+    """Mostra um selectbox com opcoes baseadas no df ja filtrado."""
+    if coluna not in df_origem.columns:
+        return df_atual
+
+    valores_disponiveis = ["Todos"] + sorted(
+        df_atual[coluna].dropna().astype(str).unique().tolist()
+    )
+    escolha = st.selectbox(label, valores_disponiveis, key=key)
+    if escolha != "Todos":
+        df_atual = df_atual[df_atual[coluna].astype(str) == escolha]
+    return df_atual
+
+df_filtrado = df.copy()
+v = st.session_state.filtros_version
+
+# Filtros encadeados em 4 colunas
+cols_filtros = st.columns(4)
 filtros_disponiveis = [c for c in FILTROS_PADRAO if c in df.columns]
 
-n_principais = min(len(filtros_disponiveis), 4) or 1
-cols = st.columns(n_principais)
 for i, coluna in enumerate(filtros_disponiveis):
-    valores = ["Todos"] + sorted(df[coluna].dropna().astype(str).unique().tolist())
-    with cols[i % n_principais]:
-        escolha = st.selectbox(coluna, valores, key=f"f_{coluna}")
-        if escolha != "Todos":
-            df_filtrado = df_filtrado[df_filtrado[coluna].astype(str) == escolha]
+    with cols_filtros[i % 4]:
+        df_filtrado = aplicar_selectbox_encadeado(
+            df_filtrado, df, coluna, coluna, f"f_{coluna}_v{v}"
+        )
 
-# Datas
+# Filtros de data
 col_d1, col_d2 = st.columns(2)
 if "Data entrada" in df.columns:
     with col_d1:
-        datas = df["Data entrada"].dropna()
+        datas = df_filtrado["Data entrada"].dropna()
         if not datas.empty:
             min_d = datas.min().date()
             max_d = datas.max().date()
@@ -407,7 +436,7 @@ if "Data entrada" in df.columns:
                 value=(min_d, max_d),
                 min_value=min_d,
                 max_value=max_d,
-                key="f_entrada"
+                key=f"f_entrada_v{v}"
             )
             if isinstance(faixa, tuple) and len(faixa) == 2:
                 d1, d2 = faixa
@@ -418,7 +447,7 @@ if "Data entrada" in df.columns:
 
 if "Data entrega" in df.columns:
     with col_d2:
-        datas = df["Data entrega"].dropna()
+        datas = df_filtrado["Data entrega"].dropna()
         if not datas.empty:
             min_d = datas.min().date()
             max_d = datas.max().date()
@@ -427,7 +456,7 @@ if "Data entrega" in df.columns:
                 value=(min_d, max_d),
                 min_value=min_d,
                 max_value=max_d,
-                key="f_entrega"
+                key=f"f_entrega_v{v}"
             )
             if isinstance(faixa, tuple) and len(faixa) == 2:
                 d1, d2 = faixa
@@ -437,52 +466,80 @@ if "Data entrega" in df.columns:
                 ]
 
 # ------------------------------------------------------------
-# FILTRO PRODUTO (expander simples)
+# FILTRO PRODUTO COM ENCADEAMENTO
 # ------------------------------------------------------------
 with st.expander("Filtro Produto (clique para abrir)", expanded=False):
-    colunas_produto_existentes = [c for c in COLUNAS_PRODUTO if c in df.columns]
-    filtros_produto_escolhidos = {}
+    col_titulo_p, col_limpar_p = st.columns([4, 1])
+    with col_titulo_p:
+        st.markdown("**Filtros adicionais por produto**")
+    with col_limpar_p:
+        st.markdown('<div class="btn-limpar">', unsafe_allow_html=True)
+        if st.button("\U0001F9F9 Limpar filtros", key="btn_limpar_produto"):
+            limpar_filtros_principais()
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
+    colunas_produto_existentes = [c for c in COLUNAS_PRODUTO if c in df.columns]
     n_cols_prod = 3
+
     for i in range(0, len(colunas_produto_existentes), n_cols_prod):
         cols_filtro = st.columns(n_cols_prod)
         bloco = colunas_produto_existentes[i:i + n_cols_prod]
         for j, coluna in enumerate(bloco):
             with cols_filtro[j]:
-                valores = ["Todos"] + sorted(df[coluna].dropna().astype(str).unique().tolist())
-                escolha = st.selectbox(coluna, valores, key=f"fp_{coluna}")
-                filtros_produto_escolhidos[coluna] = escolha
-
-    for coluna, valor in filtros_produto_escolhidos.items():
-        if valor != "Todos":
-            df_filtrado = df_filtrado[df_filtrado[coluna].astype(str) == valor]
+                df_filtrado = aplicar_selectbox_encadeado(
+                    df_filtrado, df, coluna, coluna, f"fp_{coluna}_v{v}"
+                )
 
 # ------------------------------------------------------------
-# KPIs
+# METRICAS (REVISADAS)
 # ------------------------------------------------------------
 st.markdown("---")
 
-col_num_pedido = "N\u00famero pedido"
-col_dist = "Distribui\u00e7\u00e3o"
-
-if col_num_pedido in df_filtrado.columns:
-    total_pedidos = df_filtrado[col_num_pedido].nunique()
+# Numero de clientes distintos com pedidos planejados
+if "PDV" in df_filtrado.columns and not df_filtrado.empty:
+    n_clientes = df_filtrado["PDV"].nunique()
 else:
-    total_pedidos = len(df_filtrado)
+    n_clientes = 0
 
-if col_dist in df_filtrado.columns:
-    distribuidos = int(df_filtrado[col_dist].sum())
+# Numero de distribuicoes OK (soma direta de Distribuicao=1)
+if COL_DIST in df_filtrado.columns and not df_filtrado.empty:
+    n_distribuicoes_ok = int(df_filtrado[COL_DIST].sum())
 else:
-    distribuidos = 0
+    n_distribuicoes_ok = 0
 
-nao_distribuidos = max(0, total_pedidos - distribuidos)
-taxa = (distribuidos / total_pedidos * 100) if total_pedidos else 0
+# Numero total de produtos agendados (cada linha = 1 produto em 1 pedido)
+n_produtos_total = len(df_filtrado)
+
+# Indicador 1: Distribuicao OK / Total de produtos agendados
+if n_produtos_total > 0:
+    indicador_produtos = (n_distribuicoes_ok / n_produtos_total) * 100
+else:
+    indicador_produtos = 0
+
+# Indicador 2: Distribuicao OK / Numero de clientes
+if n_clientes > 0:
+    indicador_clientes = n_distribuicoes_ok / n_clientes
+else:
+    indicador_clientes = 0
 
 k1, k2, k3, k4 = st.columns(4)
-k1.metric("Pedidos", f"{total_pedidos:,}".replace(",", "."))
-k2.metric("\u2705 Distribui\u00e7\u00e3o", f"{distribuidos:,}".replace(",", "."))
-k3.metric("\u274C Nao distribui\u00e7\u00e3o", f"{nao_distribuidos:,}".replace(",", "."))
-k4.metric("Taxa", f"{taxa:.1f}%")
+k1.metric(
+    "N\u00ba de Clientes",
+    f"{n_clientes:,}".replace(",", ".")
+)
+k2.metric(
+    "\u2705 Distribui\u00e7\u00f5es OK",
+    f"{n_distribuicoes_ok:,}".replace(",", ".")
+)
+k3.metric(
+    "Distrib OK / Produtos",
+    f"{indicador_produtos:.1f}%"
+)
+k4.metric(
+    "Distrib OK / Cliente",
+    f"{indicador_clientes:.2f}"
+)
 
 st.markdown("---")
 
@@ -496,8 +553,8 @@ if "Nome PDV" not in df_filtrado.columns or df_filtrado.empty:
     st.stop()
 
 resumo_clientes = df_filtrado.groupby(["Nome PDV", "PDV"], observed=True).agg(
-    qtd_pedidos=(col_num_pedido, "nunique"),
-    qtd_distrib=(col_dist, "sum")
+    qtd_pedidos=(COL_NUM_PEDIDO, "nunique"),
+    qtd_distrib=(COL_DIST, "sum")
 ).reset_index()
 
 resumo_clientes["qtd_distrib"] = resumo_clientes["qtd_distrib"].fillna(0).astype(int)
@@ -531,7 +588,7 @@ for _, linha in clientes_pagina.iterrows():
     titulo = (
         f"{nome}   |   PDV: {pdv}   "
         f"|   {qtd_p} pedidos   "
-        f"|   {qtd_d} distribuicoes"
+        f"|   {qtd_d} distribuicoes OK"
     )
 
     with st.expander(titulo, expanded=False):
@@ -540,23 +597,25 @@ for _, linha in clientes_pagina.iterrows():
             (df_filtrado["PDV"] == linha["PDV"])
         ]
 
-        if col_num_pedido in dados_cliente.columns:
-            for num_pedido, itens in dados_cliente.groupby(col_num_pedido, observed=True):
+        if COL_NUM_PEDIDO in dados_cliente.columns:
+            for num_pedido, itens in dados_cliente.groupby(COL_NUM_PEDIDO, observed=True):
                 primeira = itens.iloc[0]
 
                 tipo = str(primeira.get("Tipo pedido", "-"))
                 sit_p = str(primeira.get("Situa\u00e7\u00e3o pedido", "-"))
                 sit_a = str(primeira.get("Situa\u00e7\u00e3o atendimento", "-"))
 
-                if col_dist in itens.columns:
-                    pedido_eh_distrib = int(itens[col_dist].max())
+                # CORRECAO: mostra X de Y produtos OK
+                total_itens_pedido = len(itens)
+                if COL_DIST in itens.columns:
+                    itens_ok = int(itens[COL_DIST].sum())
                 else:
-                    pedido_eh_distrib = 0
+                    itens_ok = 0
 
-                if pedido_eh_distrib == 1:
-                    badge_distrib = '<span class="pedido-status status-ok">\u2705 Distribui\u00e7\u00e3o</span>'
-                else:
-                    badge_distrib = '<span class="pedido-status status-erro">\u274C Nao distribui\u00e7\u00e3o</span>'
+                badge_distrib = (
+                    f'<span class="pedido-status status-distrib">'
+                    f'{itens_ok} de {total_itens_pedido} produtos OK</span>'
+                )
 
                 badges = (
                     badge_distrib +
@@ -586,15 +645,15 @@ for _, linha in clientes_pagina.iterrows():
                 )
 
                 colunas_disponiveis_itens = [
-                    "C\u00f3d. produto", "Desc. produto",
+                    COL_PRODUTO, "Desc. produto",
                     "Qtd venda (cx)", "Volume (hl)", "Valor l\u00edquido (R$)",
-                    col_dist
+                    COL_DIST
                 ]
                 colunas_itens = [c for c in colunas_disponiveis_itens if c in itens.columns]
 
                 itens_exibir = itens[colunas_itens].copy().reset_index(drop=True)
-                if col_dist in itens_exibir.columns:
-                    itens_exibir[col_dist] = itens_exibir[col_dist].map(
+                if COL_DIST in itens_exibir.columns:
+                    itens_exibir[COL_DIST] = itens_exibir[COL_DIST].map(
                         {1: "\u2705", 0: "\u274C"}
                     ).fillna("\u274C")
 
