@@ -1,6 +1,6 @@
 # ============================================================
 # PAINEL DE DISTRIBUICAO - DIRETORIA EIXO ATLANTICO
-# Versao 4.3 - Validado sem erros de sintaxe
+# Versao 4.4 - Otimizado para 30k+ linhas
 # Autor: Ricardo Marchette Sabino
 # ============================================================
 
@@ -138,14 +138,17 @@ def carregar_base_cache(timestamp_arquivo):
     if not os.path.exists(ARQUIVO_BASE):
         return None
     df = pd.read_parquet(ARQUIVO_BASE)
-    cols_categorizar = ["CDD", "Setor", "Tipo pedido", "Situação pedido", "Situação atendimento"] + COLUNAS_PRODUTO
+    cols_categorizar = (
+        ["CDD", "Setor", "Tipo pedido", "Situação pedido", "Situação atendimento"]
+        + COLUNAS_PRODUTO
+    )
     for col in cols_categorizar:
         if col in df.columns:
             df[col] = df[col].astype("category")
     return df
 
 # ------------------------------------------------------------
-# REGRA DE DISTRIBUICAO
+# REGRA DE DISTRIBUICAO (mais proxima de hoje)
 # ------------------------------------------------------------
 def aplicar_regra_distribuicao(df):
     if "Distribuição" not in df.columns:
@@ -175,46 +178,86 @@ def aplicar_regra_distribuicao(df):
     return df
 
 # ------------------------------------------------------------
-# UPLOAD
+# UPLOAD OTIMIZADO (com calamine + barra de progresso)
 # ------------------------------------------------------------
-def ler_arquivo_upload(arquivo):
-    df = pd.read_excel(arquivo, sheet_name=ABA_CORA)
+def ler_arquivo_upload(arquivo, progress_bar=None, status_text=None):
+    """Le o Excel da aba CORA de forma otimizada."""
+
+    if status_text:
+        status_text.text("📖 Lendo arquivo Excel (pode levar alguns segundos)...")
+    if progress_bar:
+        progress_bar.progress(10)
+
+    # OTIMIZACAO 1: tenta calamine (muito mais rapido), fallback para openpyxl
+    try:
+        df = pd.read_excel(arquivo, sheet_name=ABA_CORA, engine="calamine")
+    except Exception:
+        df = pd.read_excel(arquivo, sheet_name=ABA_CORA)
+
+    if progress_bar:
+        progress_bar.progress(50)
+    if status_text:
+        n = f"{len(df):,}".replace(",", ".")
+        status_text.text(f"⚙️ Processando {n} linhas...")
+
     df.columns = df.columns.str.strip()
 
-    for col in COLUNAS_IGNORAR:
-        if col in df.columns:
-            df = df.drop(columns=[col])
+    cols_remover = [c for c in COLUNAS_IGNORAR if c in df.columns]
+    if cols_remover:
+        df = df.drop(columns=cols_remover)
 
     renomear = {k: v for k, v in COLUNAS_MAP.items() if k in df.columns}
-    df = df.rename(columns=renomear)
+    if renomear:
+        df = df.rename(columns=renomear)
+
+    if progress_bar:
+        progress_bar.progress(65)
 
     # Datas
     for col in ["Data entrada", "Data entrega"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    # Distribuição (int)
+    # Distribuicao
     if "Distribuição" in df.columns:
-        df["Distribuição"] = pd.to_numeric(df["Distribuição"], errors="coerce").fillna(0).astype("int8")
+        df["Distribuição"] = pd.to_numeric(
+            df["Distribuição"], errors="coerce"
+        ).fillna(0).astype("int8")
 
-    # Numéricos
+    # Numericos
     for col in ["Qtd venda (cx)", "Volume (hl)", "Valor líquido (R$)"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
 
-    # ⚡ CORREÇÃO: força colunas de texto a serem string (evita erro do parquet)
+    if progress_bar:
+        progress_bar.progress(75)
+
+    # OTIMIZACAO 2: converte colunas texto em batch
     colunas_texto = (
         COLUNAS_PRODUTO +
         ["CDD", "Setor", "PDV", "Nome PDV", "Cód. produto", "Desc. produto",
          "Tipo pedido", "Situação pedido", "Situação atendimento", "Número pedido"]
     )
-    for col in colunas_texto:
-        if col in df.columns:
-            df[col] = df[col].astype(str).replace({"nan": "", "None": ""})
+    colunas_texto_existentes = [c for c in colunas_texto if c in df.columns]
+    if colunas_texto_existentes:
+        df[colunas_texto_existentes] = df[colunas_texto_existentes].astype(str)
+        df[colunas_texto_existentes] = df[colunas_texto_existentes].replace(
+            {"nan": "", "None": "", "NaT": ""}
+        )
+
+    if progress_bar:
+        progress_bar.progress(90)
+    if status_text:
+        status_text.text("🎯 Aplicando regra de distribuicao...")
 
     df = aplicar_regra_distribuicao(df)
-    return df
 
+    if progress_bar:
+        progress_bar.progress(100)
+    if status_text:
+        status_text.text("✅ Processamento concluido!")
+
+    return df
 
 def salvar_base(df):
     df.to_parquet(ARQUIVO_BASE, index=False, compression="snappy")
@@ -262,7 +305,7 @@ if "admin_logado" not in st.session_state:
     st.session_state.admin_logado = False
 
 # ------------------------------------------------------------
-# SIDEBAR - LOGIN
+# SIDEBAR - LOGIN E UPLOAD
 # ------------------------------------------------------------
 with st.sidebar:
     st.markdown("### 🔐 Acesso restrito")
@@ -290,10 +333,19 @@ with st.sidebar:
         upload = st.file_uploader("Arquivo CORA (.xlsx):", type=["xlsx"])
         if upload is not None:
             try:
-                with st.spinner("Processando..."):
-                    df_novo = ler_arquivo_upload(upload)
-                    salvar_base(df_novo)
-                st.success(f"Base atualizada! {len(df_novo)} linhas.")
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
+                df_novo = ler_arquivo_upload(upload, progress_bar, status_text)
+
+                status_text.text("💾 Salvando base...")
+                salvar_base(df_novo)
+
+                progress_bar.empty()
+                status_text.empty()
+
+                n = f"{len(df_novo):,}".replace(",", ".")
+                st.success(f"✅ Base atualizada! {n} linhas.")
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro: {e}")
@@ -302,7 +354,7 @@ with st.sidebar:
 # CARREGA BASE
 # ------------------------------------------------------------
 if not os.path.exists(ARQUIVO_BASE):
-    st.info("⏳ Base ainda não disponível.")
+    st.info("⏳ Base ainda nao disponivel.")
     st.stop()
 
 timestamp_arquivo = os.path.getmtime(ARQUIVO_BASE)
