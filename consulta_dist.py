@@ -476,7 +476,8 @@ if st.session_state.show_filtro_produto:
         for i in range(0, len(colunas_produto_existentes), n_cols):
             cols_filtro = st.columns(n_cols)
             for j, coluna in enumerate(colunas_produto_existentes[i:i+n_cols]):
-                with cols_filtrovalores = ["Todos"] + sorted(df[coluna].dropna().astype(str).unique().tolist())
+                with cols_filtro[j]:
+                    valores = ["Todos"] + sorted(df[coluna].dropna().astype(str).unique().tolist())
                     valor_atual = st.session_state.filtros_produto.get(coluna, "Todos")
                     if valor_atual not in valores:
                         valor_atual = "Todos"
@@ -486,7 +487,7 @@ if st.session_state.show_filtro_produto:
                         index=valores.index(valor_atual),
                         key=f"fp_{coluna}"
                     )
-                    st.session_state.filtros_produto[coluna] = escolha
+                 os_produto[coluna] = escolha
 
         col_a, col_b = st.columns([1, 1])
         with col_a:
