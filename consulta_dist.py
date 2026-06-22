@@ -188,19 +188,33 @@ def ler_arquivo_upload(arquivo):
     renomear = {k: v for k, v in COLUNAS_MAP.items() if k in df.columns}
     df = df.rename(columns=renomear)
 
+    # Datas
     for col in ["Data entrada", "Data entrega"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
 
+    # Distribuição (int)
     if "Distribuição" in df.columns:
         df["Distribuição"] = pd.to_numeric(df["Distribuição"], errors="coerce").fillna(0).astype("int8")
 
+    # Numéricos
     for col in ["Qtd venda (cx)", "Volume (hl)", "Valor líquido (R$)"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
 
+    # ⚡ CORREÇÃO: força colunas de texto a serem string (evita erro do parquet)
+    colunas_texto = (
+        COLUNAS_PRODUTO +
+        ["CDD", "Setor", "PDV", "Nome PDV", "Cód. produto", "Desc. produto",
+         "Tipo pedido", "Situação pedido", "Situação atendimento", "Número pedido"]
+    )
+    for col in colunas_texto:
+        if col in df.columns:
+            df[col] = df[col].astype(str).replace({"nan": "", "None": ""})
+
     df = aplicar_regra_distribuicao(df)
     return df
+
 
 def salvar_base(df):
     df.to_parquet(ARQUIVO_BASE, index=False, compression="snappy")
