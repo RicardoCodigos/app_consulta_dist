@@ -1,6 +1,6 @@
 # ============================================================
-# APP DE CONSULTA DE PEDIDOS – DISTRIBUIÇÃO
-# Versão 2.0 – Visual Executivo + Admin protegido + Tempo real
+# PAINEL DE DISTRIBUIÇÃO – CORA
+# Versão 3.0 – Adaptada para a base CORA
 # Autor: Ricardo Marchette Sabino
 # ============================================================
 
@@ -11,24 +11,22 @@ from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 
 # ------------------------------------------------------------
-# CONFIGURAÇÃO BÁSICA DA PÁGINA
+# CONFIGURAÇÃO BÁSICA
 # ------------------------------------------------------------
 st.set_page_config(
-    page_title="Painel de Distribuição | Consulta de Pedidos",
+    page_title="Painel de Distribuição | CORA",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
 # ------------------------------------------------------------
-# ESTILO VISUAL (CSS personalizado)
+# ESTILO VISUAL
 # ------------------------------------------------------------
 st.markdown("""
 <style>
-/* Fundo geral */
 .main { background-color: #F5F7FA; }
 
-/* Cabeçalho */
 .header {
     background: linear-gradient(90deg, #0B2545 0%, #13315C 100%);
     padding: 28px 32px;
@@ -37,19 +35,9 @@ st.markdown("""
     margin-bottom: 24px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
-.header h1 {
-    color: white;
-    font-size: 26px;
-    margin: 0;
-    font-weight: 600;
-}
-.header p {
-    color: #D9E2EC;
-    margin: 4px 0 0 0;
-    font-size: 14px;
-}
+.header h1 { color: white; font-size: 26px; margin: 0; font-weight: 600; }
+.header p  { color: #D9E2EC; margin: 4px 0 0 0; font-size: 14px; }
 
-/* KPIs */
 [data-testid="stMetric"] {
     background-color: white;
     padding: 16px 20px;
@@ -57,41 +45,27 @@ st.markdown("""
     box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     border-left: 4px solid #0B2545;
 }
-[data-testid="stMetricLabel"] {
-    color: #5C6B7A !important;
-    font-size: 13px !important;
-    font-weight: 500 !important;
-}
-[data-testid="stMetricValue"] {
-    color: #0B2545 !important;
-    font-size: 28px !important;
-}
+[data-testid="stMetricLabel"] { color: #5C6B7A !important; font-size: 13px !important; font-weight: 500 !important; }
+[data-testid="stMetricValue"] { color: #0B2545 !important; font-size: 28px !important; }
 
-/* Cards de cliente */
-.cliente-card {
-    background-color: white;
-    border-radius: 10px;
-    padding: 18px 22px;
-    margin-bottom: 12px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-    border-left: 4px solid #0B2545;
-}
-.cliente-nome { font-size: 16px; font-weight: 600; color: #0B2545; }
-.cliente-pdv  { font-size: 13px; color: #5C6B7A; margin-top: 2px; }
-.cliente-info { font-size: 13px; color: #2C3E50; margin-top: 8px; }
-
-/* Botões */
 .stButton>button {
-    background-color: #0B2545;
-    color: white;
-    border-radius: 8px;
-    border: none;
-    padding: 8px 18px;
-    font-weight: 500;
+    background-color: #0B2545; color: white; border-radius: 8px;
+    border: none; padding: 8px 18px; font-weight: 500;
 }
 .stButton>button:hover { background-color: #13315C; color: white; }
 
-/* Esconde footer "Made with Streamlit" */
+.pedido-status {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    margin-right: 6px;
+}
+.status-ok    { background-color: #DFF5E1; color: #1F7A3A; }
+.status-pend  { background-color: #FFF4D6; color: #8A6D00; }
+.status-erro  { background-color: #FBE3E3; color: #A12626; }
+
 footer { visibility: hidden; }
 #MainMenu { visibility: hidden; }
 </style>
@@ -100,20 +74,62 @@ footer { visibility: hidden; }
 # ------------------------------------------------------------
 # CONSTANTES
 # ------------------------------------------------------------
-ARQUIVO_BASE = "base_pedidos.parquet"  # base salva no servidor
-ARQUIVO_CONFIG = "config_filtros.txt"  # quais colunas o vendedor filtra
-INTERVALO_REFRESH_MS = 30_000          # atualiza tela a cada 30 segundos
+ARQUIVO_BASE = "base_pedidos.parquet"
+INTERVALO_REFRESH_MS = 30_000
+ABA_CORA = "CORA"
+
+# Mapeamento: nome real na planilha -> nome amigável no app
+COLUNAS_MAP = {
+    "Cód. unidade entrega": "CDD",
+    "Cód. setor": "Setor",
+    "Cód. cliente": "PDV",
+    "Nome fantasia": "Nome PDV",
+    "Data entrada": "Data entrada",
+    "Data entrega": "Data entrega",
+    "Cód. produto": "Cód. produto",
+    "Desc. produto": "Desc. produto",
+    "Quant. venda": "Qtd venda (cx)",
+    "Volume hectolitro": "Volume (hl)",
+    "Valor líquido item": "Valor líquido (R$)",
+    "Tipo pedido": "Tipo pedido",
+    "Situação pedido": "Situação pedido",
+    "Situação atend. pedido": "Situação atendimento",
+    "Número pedido": "Número pedido",
+    "Distribuição": "Distribuição",
+}
+
+# Filtros disponíveis pro vendedor
+FILTROS_PADRAO = ["CDD", "Setor", "PDV", "Nome PDV", "Data entrada", "Data entrega"]
 
 # ------------------------------------------------------------
-# AUTO-REFRESH PARA OS VENDEDORES (tempo real)
+# AUTO-REFRESH
 # ------------------------------------------------------------
 st_autorefresh(interval=INTERVALO_REFRESH_MS, key="refresh_vendedor")
 
 # ------------------------------------------------------------
-# FUNÇÕES DE APOIO
+# FUNÇÕES
 # ------------------------------------------------------------
+def ler_arquivo_upload(arquivo):
+    """Lê o Excel pegando SÓ a aba CORA."""
+    df = pd.read_excel(arquivo, sheet_name=ABA_CORA)
+    df.columns = df.columns.str.strip()
+
+    # Renomeia as colunas que existem
+    renomear = {k: v for k, v in COLUNAS_MAP.items() if k in df.columns}
+    df = df.rename(columns=renomear)
+
+    # Converte datas
+    for col in ["Data entrada", "Data entrega"]:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce")
+
+    # Garante que distribuição seja numérica (0 ou 1)
+    if "Distribuição" in df.columns:
+        df["Distribuição"] = pd.to_numeric(df["Distribuição"], errors="coerce").fillna(0).astype(int)
+
+    return df
+
 def carregar_base_do_servidor():
-    """Lê a base salva (que o admin subiu)."""
     if os.path.exists(ARQUIVO_BASE):
         df = pd.read_parquet(ARQUIVO_BASE)
         ts = os.path.getmtime(ARQUIVO_BASE)
@@ -124,42 +140,30 @@ def carregar_base_do_servidor():
 def salvar_base(df):
     df.to_parquet(ARQUIVO_BASE, index=False)
 
-def ler_arquivo_upload(arquivo):
-    if arquivo.name.endswith(".csv"):
-        df = pd.read_csv(arquivo, sep=";", encoding="utf-8-sig")
-    else:
-        df = pd.read_excel(arquivo)
-    df.columns = df.columns.str.strip()
-    return df
+def badge_status(texto, tipo="ok"):
+    cor = {"ok": "status-ok", "pend": "status-pend", "erro": "status-erro"}.get(tipo, "status-pend")
+    return f'<span class="pedido-status {cor}">{texto}</span>'
 
-def salvar_config_filtros(colunas):
-    with open(ARQUIVO_CONFIG, "w", encoding="utf-8") as f:
-        f.write("\n".join(colunas))
-
-def ler_config_filtros():
-    if os.path.exists(ARQUIVO_CONFIG):
-        with open(ARQUIVO_CONFIG, "r", encoding="utf-8") as f:
-            return [l.strip() for l in f.readlines() if l.strip()]
-    return []
-
-def eh_distribuido(serie_status):
-    """Considera contabilizando se o texto bate com sim/ok/contabiliz/distrib."""
-    return serie_status.astype(str).str.lower().str.contains(
-        "sim|ok|contabiliz|distrib", na=False
-    )
+def classifica_situacao(valor):
+    s = str(valor).upper()
+    if "CANCEL" in s or "ANUL" in s or "ERRO" in s:
+        return "erro"
+    if "ATEND" in s or "FATUR" in s or "OK" in s:
+        return "ok"
+    return "pend"
 
 # ------------------------------------------------------------
 # CABEÇALHO
 # ------------------------------------------------------------
 st.markdown("""
 <div class="header">
-    <h1>📊 Painel de Distribuição</h1>
+    <h1>📊 Painel de Distribuição – CORA</h1>
     <p>Consulta de pedidos em tempo real – Operação Comercial</p>
 </div>
 """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------
-# LOGIN DE ADMIN (na sidebar)
+# LOGIN ADMIN
 # ------------------------------------------------------------
 if "admin_logado" not in st.session_state:
     st.session_state.admin_logado = False
@@ -173,7 +177,6 @@ with st.sidebar:
                 senha_correta = st.secrets["admin_password"]
             except Exception:
                 senha_correta = None
-
             if senha_correta and senha == senha_correta:
                 st.session_state.admin_logado = True
                 st.success("Acesso liberado.")
@@ -187,38 +190,23 @@ with st.sidebar:
             st.rerun()
 
 # ------------------------------------------------------------
-# ÁREA DO ADMIN (upload e configuração)
+# ÁREA DO ADMIN
 # ------------------------------------------------------------
 if st.session_state.admin_logado:
     with st.sidebar:
         st.markdown("---")
         st.markdown("### ⚙️ Atualizar base")
-        upload = st.file_uploader("Selecione o arquivo (.xlsx ou .csv):", type=["xlsx", "csv"])
+        upload = st.file_uploader("Selecione o arquivo CORA (.xlsx):", type=["xlsx"])
         if upload is not None:
             try:
                 df_novo = ler_arquivo_upload(upload)
                 salvar_base(df_novo)
-                st.success(f"Base atualizada! {len(df_novo)} registros.")
+                st.success(f"Base atualizada! {len(df_novo)} linhas da aba CORA.")
             except Exception as e:
                 st.error(f"Erro ao ler arquivo: {e}")
 
-        # Configuração das colunas de filtro
-        df_atual, _ = carregar_base_do_servidor()
-        if df_atual is not None:
-            st.markdown("### 🎛️ Filtros do vendedor")
-            colunas_disponiveis = df_atual.columns.tolist()
-            config_atual = ler_config_filtros()
-            colunas_escolhidas = st.multiselect(
-                "Quais colunas o vendedor poderá filtrar?",
-                options=colunas_disponiveis,
-                default=config_atual if config_atual else []
-            )
-            if st.button("💾 Salvar configuração"):
-                salvar_config_filtros(colunas_escolhidas)
-                st.success("Configuração salva.")
-
 # ------------------------------------------------------------
-# ÁREA PÚBLICA (vendedor)
+# CARREGA BASE
 # ------------------------------------------------------------
 df, ultima_atualizacao = carregar_base_do_servidor()
 
@@ -226,64 +214,96 @@ if df is None:
     st.info("⏳ Base ainda não disponível. Volte em alguns instantes.")
     st.stop()
 
-# Info de atualização
 st.markdown(
     f"<p style='color:#5C6B7A;font-size:13px;'>🔄 Base atualizada em <b>{ultima_atualizacao}</b> "
     f"&nbsp;|&nbsp; Atualização automática a cada 30 segundos</p>",
     unsafe_allow_html=True
 )
 
-# Identifica colunas-chave (case-insensitive)
-colunas_map = {c.lower(): c for c in df.columns}
-col_cliente = colunas_map.get("cliente")
-col_pdv     = colunas_map.get("pdv") or colunas_map.get("codigo pdv") or colunas_map.get("código pdv")
-col_pedido  = colunas_map.get("pedido")
-col_status  = colunas_map.get("status")
+# ------------------------------------------------------------
+# FILTROS
+# ------------------------------------------------------------
+st.markdown("#### 🔎 Filtros")
 
-# ------------------------------------------------------------
-# FILTROS (somente os liberados pelo admin)
-# ------------------------------------------------------------
-colunas_filtro = ler_config_filtros()
 df_filtrado = df.copy()
+filtros_disponiveis = [c for c in FILTROS_PADRAO if c in df.columns]
 
-if colunas_filtro:
-    st.markdown("#### 🔎 Filtros")
-    n = min(len(colunas_filtro), 4)
-    cols = st.columns(n)
-    for i, coluna in enumerate(colunas_filtro):
-        if coluna in df.columns:
-            valores = ["Todos"] + sorted(df[coluna].dropna().astype(str).unique().tolist())
-            with cols[i % n]:
-                escolha = st.selectbox(coluna, valores, key=f"f_{coluna}")
-                if escolha != "Todos":
-                    df_filtrado = df_filtrado[df_filtrado[coluna].astype(str) == escolha]
+cols = st.columns(min(len(filtros_disponiveis), 4) or 1)
+
+# Filtros simples (CDD, Setor, PDV, Nome PDV)
+for i, coluna in enumerate([c for c in filtros_disponiveis if "Data" not in c]):
+    valores = ["Todos"] + sorted(df[coluna].dropna().astype(str).unique().tolist())
+    with cols[i % len(cols)]:
+        escolha = st.selectbox(coluna, valores, key=f"f_{coluna}")
+        if escolha != "Todos":
+            df_filtrado = df_filtrado[df_filtrado[coluna].astype(str) == escolha]
+
+# Filtros de data
+col_d1, col_d2 = st.columns(2)
+if "Data entrada" in df.columns:
+    with col_d1:
+        datas = df["Data entrada"].dropna()
+        if not datas.empty:
+            min_d, max_d = datas.min().date(), datas.max().date()
+            faixa = st.date_input("Data entrada (período):", value=(min_d, max_d),
+                                  min_value=min_d, max_value=max_d, key="f_entrada")
+            if isinstance(faixa, tuple) and len(faixa) == 2:
+                d1, d2 = faixa
+                df_filtrado = df_filtrado[
+                    (df_filtrado["Data entrada"].dt.date >= d1) &
+                    (df_filtrado["Data entrada"].dt.date <= d2)
+                ]
+
+if "Data entrega" in df.columns:
+    with col_d2:
+        datas = df["Data entrega"].dropna()
+        if not datas.empty:
+            min_d, max_d = datas.min().date(), datas.max().date()
+            faixa = st.date_input("Data entrega (período):", value=(min_d, max_d),
+                                  min_value=min_d, max_value=max_d, key="f_entrega")
+            if isinstance(faixa, tuple) and len(faixa) == 2:
+                d1, d2 = faixa
+                df_filtrado = df_filtrado[
+                    (df_filtrado["Data entrega"].dt.date >= d1) &
+                    (df_filtrado["Data entrega"].dt.date <= d2)
+                ]
 
 # Busca livre
-busca = st.text_input("🔍 Buscar por nº do pedido, cliente ou PDV:")
+busca = st.text_input("🔍 Buscar por nº do pedido, PDV ou Nome PDV:")
 if busca:
     mascara = pd.Series([False] * len(df_filtrado), index=df_filtrado.index)
-    for c in [col_pedido, col_cliente, col_pdv]:
-        if c:
+    for c in ["Número pedido", "PDV", "Nome PDV"]:
+        if c in df_filtrado.columns:
             mascara |= df_filtrado[c].astype(str).str.contains(busca, case=False, na=False)
     df_filtrado = df_filtrado[mascara]
 
 # ------------------------------------------------------------
-# KPIs DO TOPO
+# KPIs
 # ------------------------------------------------------------
 st.markdown("---")
-total_pedidos = len(df_filtrado)
-if col_status:
-    distribuidos = eh_distribuido(df_filtrado[col_status]).sum()
+
+# Conta pedidos únicos (não linhas)
+if "Número pedido" in df_filtrado.columns:
+    total_pedidos = df_filtrado["Número pedido"].nunique()
+else:
+    total_pedidos = len(df_filtrado)
+
+if "Distribuição" in df_filtrado.columns and "Número pedido" in df_filtrado.columns:
+    distrib_df = df_filtrado.groupby("Número pedido")["Distribuição"].max()
+    distribuidos = int((distrib_df == 1).sum())
 else:
     distribuidos = 0
+
 nao_distribuidos = total_pedidos - distribuidos
 taxa = (distribuidos / total_pedidos * 100) if total_pedidos else 0
 
+valor_total = df_filtrado["Valor líquido (R$)"].sum() if "Valor líquido (R$)" in df_filtrado.columns else 0
+
 k1, k2, k3, k4 = st.columns(4)
-k1.metric("Total de pedidos", f"{total_pedidos:,}".replace(",", "."))
-k2.metric("✅ Contabilizando", f"{distribuidos:,}".replace(",", "."))
-k3.metric("❌ Não contabilizando", f"{nao_distribuidos:,}".replace(",", "."))
-k4.metric("📈 Taxa de distribuição", f"{taxa:.1f}%")
+k1.metric("Pedidos", f"{total_pedidos:,}".replace(",", "."))
+k2.metric("✅ Distribuição", f"{distribuidos:,}".replace(",", "."))
+k3.metric("❌ Não distribuição", f"{nao_distribuidos:,}".replace(",", "."))
+k4.metric("📈 Taxa", f"{taxa:.1f}%")
 
 st.markdown("---")
 
@@ -292,39 +312,82 @@ st.markdown("---")
 # ------------------------------------------------------------
 st.markdown("### 🏪 Clientes")
 
-if not col_cliente:
-    st.warning("Sua base não tem uma coluna 'cliente'. Ajuste o nome da coluna e tente novamente.")
+if "Nome PDV" not in df_filtrado.columns:
+    st.warning("A base não tem a coluna 'Nome fantasia'. Verifique o arquivo.")
     st.stop()
 
-# Agrupa por cliente (+ pdv se existir)
-chaves = [col_cliente] + ([col_pdv] if col_pdv else [])
-grupos = df_filtrado.groupby(chaves, dropna=False)
+grupos = df_filtrado.groupby(["Nome PDV", "PDV"], dropna=False)
 
 if len(grupos) == 0:
     st.info("Nenhum pedido encontrado com os filtros atuais.")
 else:
-    for chave, dados in grupos:
-        if isinstance(chave, tuple):
-            nome_cliente = str(chave[0])
-            pdv = str(chave[1]) if len(chave) > 1 else "—"
-        else:
-            nome_cliente = str(chave)
-            pdv = "—"
+    for (nome_pdv, cod_pdv), dados in grupos:
+        nome = str(nome_pdv) if pd.notna(nome_pdv) else "—"
+        pdv  = str(cod_pdv)  if pd.notna(cod_pdv)  else "—"
 
-        qtd_pedidos = len(dados)
-        if col_status:
-            qtd_distrib = int(eh_distribuido(dados[col_status]).sum())
+        # Pedidos únicos
+        if "Número pedido" in dados.columns:
+            pedidos_unicos = dados["Número pedido"].nunique()
+            if "Distribuição" in dados.columns:
+                distrib_por_pedido = dados.groupby("Número pedido")["Distribuição"].max()
+                qtd_distrib = int((distrib_por_pedido == 1).sum())
+            else:
+                qtd_distrib = 0
         else:
+            pedidos_unicos = len(dados)
             qtd_distrib = 0
 
-        # Bloco expansível (card)
-        with st.expander(
-            f"🏪  {nome_cliente}   •   PDV: {pdv}   "
-            f"|   📦 {qtd_pedidos} pedidos   "
-            f"|   ✅ {qtd_distrib} distribuições"
-        ):
-            st.dataframe(
-                dados.reset_index(drop=True),
-                use_container_width=True,
-                hide_index=True
-            )
+        titulo = (f"🏪  {nome}   •   PDV: {pdv}   "
+                  f"|   📦 {pedidos_unicos} pedidos   "
+                  f"|   ✅ {qtd_distrib} distribuições")
+
+        with st.expander(titulo):
+            # Agrupa por número do pedido
+            if "Número pedido" in dados.columns:
+                for num_pedido, itens in dados.groupby("Número pedido"):
+                    primeira = itens.iloc[0]
+
+                    tipo  = str(primeira.get("Tipo pedido", "—"))
+                    sit_p = str(primeira.get("Situação pedido", "—"))
+                    sit_a = str(primeira.get("Situação atendimento", "—"))
+                    distrib = int(primeira.get("Distribuição", 0)) if "Distribuição" in itens.columns else 0
+
+                    badge_distrib = (
+                        '<span class="pedido-status status-ok">✅ Distribuição</span>'
+                        if distrib == 1 else
+                        '<span class="pedido-status status-erro">❌ Não distribuição</span>'
+                    )
+
+                    badges = (
+                        badge_distrib +
+                        badge_status(tipo, "ok") +
+                        badge_status(sit_p, classifica_situacao(sit_p)) +
+                        badge_status(sit_a, classifica_situacao(sit_a))
+                    )
+
+                    data_entrada = primeira.get("Data entrada", "")
+                    data_entrega = primeira.get("Data entrega", "")
+                    data_entrada_str = data_entrada.strftime("%d/%m/%Y %H:%M") if pd.notna(data_entrada) else "—"
+                    data_entrega_str = data_entrega.strftime("%d/%m/%Y") if pd.notna(data_entrega) else "—"
+
+                    st.markdown(
+                        f"**Pedido {num_pedido}** &nbsp;&nbsp; "
+                        f"📅 Entrada: {data_entrada_str} &nbsp;|&nbsp; 🚚 Entrega: {data_entrega_str}<br>"
+                        f"{badges}",
+                        unsafe_allow_html=True
+                    )
+
+                    # Tabela de itens
+                    colunas_itens = [c for c in [
+                        "Cód. produto", "Desc. produto",
+                        "Qtd venda (cx)", "Volume (hl)", "Valor líquido (R$)"
+                    ] if c in itens.columns]
+
+                    st.dataframe(
+                        itens[colunas_itens].reset_index(drop=True),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                    st.markdown("---")
+            else:
+                st.dataframe(dados.reset_index(drop=True), use_container_width=True, hide_index=True)
