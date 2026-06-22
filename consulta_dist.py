@@ -260,6 +260,13 @@ def ler_arquivo_upload(arquivo, progress_bar=None, status_text=None):
     return df
 
 def salvar_base(df):
+    # ⚡ CORREÇÃO FINAL: força TODAS as colunas object para string
+    # Isso garante que o parquet não falhe com tipos mistos
+    for col in df.select_dtypes(include=["object"]).columns:
+        df[col] = df[col].astype(str).replace(
+            {"nan": "", "None": "", "NaT": "", "<NA>": ""}
+        )
+
     df.to_parquet(ARQUIVO_BASE, index=False, compression="snappy")
     agora = datetime.now().strftime("%d/%m/%Y %H:%M")
     with open(ARQUIVO_TIMESTAMP, "w", encoding="utf-8") as f:
